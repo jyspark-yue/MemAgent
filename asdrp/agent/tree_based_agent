@@ -5,7 +5,7 @@ import asyncio
 from datetime import datetime
 from llama_index.core.agent.workflow import FunctionAgent
 from llama_index.core import Document, ServiceContext
-from llama_index.indices.composabilty
+from llama_index.indices.composabilty import ComposableGraph
 
 from llama_index.llms.ollama import Ollama
 
