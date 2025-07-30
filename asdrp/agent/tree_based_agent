@@ -1,0 +1,60 @@
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
+
+import asyncio
+from datetime import datetime
+from llama_index.core.agent.workflow import FunctionAgent
+from llama_index.core import Document, ServiceContext
+from llama_index.indices.composabilty
+
+from llama_index.llms.ollama import Ollama
+
+# LLM setup
+llm = Ollama(model="qwen3:4b")
+service_context = ServiceContext.from_defaults(llm=llm)
+
+# Tools
+def get_current_time():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def get_current_weather(city: str):
+    return f"The weather in {city} is sunny."
+
+tools = [get_current_time, get_current_weather]
+
+# Sample Chat Sessions
+chat_sessions = [
+    Document(text="User: I played soccer last week.\nAssistant: Wow! Did you score a goal?"),
+    Document(text="User: I bought a new Lenovo Laptop.\nAssistant: That's a great laptop for working.")
+]
+
+# Built Tree Based Memory
+memory_tree = ComposableGraph.from_documents(
+    chat_sessions,
+    service_context=service_context,
+    num_children=2,
+    build_tree=True
+)
+
+#Agent
+agent = FunctionAgent(
+    llm=llm,
+    tools=tools,
+)
+
+async def process(user_input: str) -> str:
+    #retrieve
+    memory_response = memory_tree.query(user_input).response
+    #combine with tools/reasoning
+    response = await agent.run(f"{user_input}\nBackground info: {memory_response}")
+    return response
+
+if __name__ == "__main__":
+    
+    user_input = input("Enter your input: ")
+    while user_input.strip() != "":
+        response = asyncio.run(process(user_input))
+        print(f"Response: {response}")
+        user_input = input("Enter your input: ")
+        
+    print("Thank you for chatting with me!")
