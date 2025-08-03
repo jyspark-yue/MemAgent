@@ -8,22 +8,21 @@
 #       outcome (was agent response accepted), reflection (learnings from interaction), and categorical tags]
 #############################################################################
 
+import asyncio
+import json
+import pprint
 from datetime import datetime, timezone
 from typing import List, Optional, Any
 from uuid import uuid4
-import asyncio
-import pprint
-import json
 
-from pydantic import Field
-
-from llama_index.llms.openai import OpenAI
 from llama_index.core import VectorStoreIndex, Document, Settings
-from llama_index.core.base.llms.types import ChatMessage, ChatResponse
+from llama_index.core.base.llms.types import ChatMessage
 from llama_index.core.llms import LLM
 from llama_index.core.memory import BaseMemoryBlock
 from llama_index.core.node_parser import SimpleNodeParser
 from llama_index.core.prompts import (RichPromptTemplate)
+from llama_index.llms.openai import OpenAI
+from pydantic import Field
 
 DEFAULT_EXTRACT_PROMPT = RichPromptTemplate(
     """
@@ -63,9 +62,10 @@ class EpisodicMemoryBlock(BaseMemoryBlock[str]):
 
     def __init__(self, name: str = "episodic_memory_block"):
         super().__init__(name = name)
-        self.llm = OpenAI()
+        self.llm = OpenAI()     #   Can replace OpenAI() with get_default_llm()
 
     async def _aput(self, messages: List[ChatMessage]) -> None:
+        """Processes the information in the ChatMessage object."""
 
         if not messages:
             return
@@ -73,11 +73,9 @@ class EpisodicMemoryBlock(BaseMemoryBlock[str]):
         msg_history = "\n".join([f"{msg.role.upper()}: {msg.content}" for msg in messages])     #   Combines the provided chat history into a single, formatted string
         prompt_text = DEFAULT_EXTRACT_PROMPT.format_messages(chat_history = msg_history)        #   Adds the provided chat history to the llm prompt
 
-        response = await self.llm.achat(messages = prompt_text)                                 #   Runs llm model based on the prompt + chat history
-
-        json_response = response.message.content.__str__()
-
-        extracted_info = json.loads(json_response)
+        response = await self.llm.achat(messages = prompt_text)     #   Runs llm model based on the prompt + chat history
+        json_response = response.message.content.__str__()          #   Converts the ChatResponse object to a string in JSON format
+        extracted_info = json.loads(json_response)                  #   Converts the JSON string to a Dictionary
 
         self.add_memory_episode(
             user_input = extracted_info["user_input"],
@@ -86,7 +84,7 @@ class EpisodicMemoryBlock(BaseMemoryBlock[str]):
             location = extracted_info["location"],
             reflection = extracted_info["reflection"],
             categorical_tags = extracted_info["categorical_tags"]
-        )
+        )   #   Passes necessary parameters to be added
 
     def add_memory_episode(
             self,
@@ -99,7 +97,7 @@ class EpisodicMemoryBlock(BaseMemoryBlock[str]):
     ) -> None:
         """Adds a new entry (episode/interaction/memory) into memory."""
 
-        for doc in self.memory_episodes:       #   Checks new entry with existing ones to prevent duplicates
+        for doc in self.memory_episodes:        #   Checks new entry with existing ones to prevent duplicates
             if doc.metadata.get("user_input", "") == user_input and doc.metadata.get("agent_output", "") == agent_output:
                 return
 
@@ -113,7 +111,7 @@ class EpisodicMemoryBlock(BaseMemoryBlock[str]):
             [OUTCOME]: {outcome}
             [LOCATION]: {location}
             [REFLECTION]: {reflection}
-        """         #   Saves key parts of interaction into memory
+        """     #   Saves key parts of interaction into memory
 
         metadata = {
             "id": memory_episode_id,
@@ -124,10 +122,10 @@ class EpisodicMemoryBlock(BaseMemoryBlock[str]):
             "outcome": outcome,
             "reflection": reflection,
             "categorical_tags": categorical_tags,
-        }           #   For use when searching through different memories
+        }       #   For use when searching through different memories
 
-        memory_episode = Document(text = memory_episode_text.strip(), metadata = metadata)
-        self.memory_episodes.append(memory_episode)
+        memory_episode = Document(text = memory_episode_text.strip(), metadata = metadata)      #   Converts the information into a Document object
+        self.memory_episodes.append(memory_episode)                                             #   Adds the Document object to the list
 
         if self.index is None:
             parser = SimpleNodeParser()                                     #   Breaks down large memories (Documents) into smaller chunks (nodes)
@@ -160,70 +158,72 @@ class EpisodicMemoryBlock(BaseMemoryBlock[str]):
         self.index = None
 
 #-------------------------------------
-# Main: smoke tests
+# Main: Smoke Tests
 #-------------------------------------
 
 async def smoke_test():
+
     print("\n--- EpisodicMemoryBlock Smoke Tests ---\n")
+
     mem = EpisodicMemoryBlock()
 
     # Test 1: Add simple user-assistant exchange
     msg1 = ChatMessage(
-        role="user",
-        content="How do I boil an egg?",
-        additional_kwargs={}
+        role =  "user",
+        content = "How do I boil an egg?",
+        additional_kwargs = {}
     )
     msg2 = ChatMessage(
-        role="assistant",
-        content="Place eggs in boiling water for 9 minutes.",
-        additional_kwargs={}
+        role = "assistant",
+        content = "Place eggs in boiling water for 9 minutes.",
+        additional_kwargs = {}
     )
     await mem._aput([msg1, msg2])
-    print("Test 1 - Basic user-assistant interaction added:")
+    print("Test 1 - Basic user-assistant interaction added: ")
     pprint.pprint(await mem._aget([msg1]))
 
     # Test 2: Duplicate message pair (should not be added)
     await mem._aput([msg1, msg2])
     all_memories = mem.get_all_memories()
-    print("Test 2 - Duplicate interaction not added again (should match count=1):")
+    print("Test 2 - Duplicate interaction not added again (should match count = 1): ")
     pprint.pprint(len(all_memories))
 
     # Test 3: Add different interaction
-    msg3 = ChatMessage(role="user", content="What's the capital of France?", additional_kwargs={})
-    msg4 = ChatMessage(role="assistant", content="Paris is the capital of France.", additional_kwargs={})
+    msg3 = ChatMessage(role = "user", content="What's the capital of France?", additional_kwargs = {})
+    msg4 = ChatMessage(role = "assistant", content = "Paris is the capital of France.", additional_kwargs = {})
     await mem._aput([msg3, msg4])
-    print("Test 3 - Second distinct memory added:")
+    print("Test 3 - Second distinct memory added: ")
     pprint.pprint(await mem._aget([msg3]))
 
     # Test 4: Retrieve all memories (get_all_memories)
-    print("Test 4 - All stored memory episodes:")
+    print("Test 4 - All stored memory episodes: ")
     pprint.pprint(mem.get_all_memories())
 
     # Test 5: Query irrelevant info (should still return closest)
-    query_msg = ChatMessage(role="user", content="What is your favorite color?", additional_kwargs={})
-    print("Test 5 - Query with no strong match:")
+    query_msg = ChatMessage(role = "user", content = "What is your favorite color?", additional_kwargs = {})
+    print("Test 5 - Query with no strong match: ")
     pprint.pprint(await mem._aget([query_msg]))
 
     # Test 6: Reset memory
     mem.reset_memories()
-    print("Test 6 - After reset (should be empty):")
+    print("Test 6 - After reset (should be empty): ")
     pprint.pprint(mem.get_all_memories())
 
     # Test 7: Add message with no assistant response (edge case)
-    single_msg = ChatMessage(role="user", content="Tell me about string theory.", additional_kwargs={})
+    single_msg = ChatMessage(role = "user", content = "Tell me about string theory.", additional_kwargs = {})
     await mem._aput([single_msg])
-    print("Test 7 - Only user message (no agent):")
+    print("Test 7 - Only user message (no agent): ")
     pprint.pprint(await mem._aget([single_msg]))
 
     # Test 8: Long conversation chain (multi-message)
     long_convo = [
-        ChatMessage(role="user", content="Plan a 3-day trip to Tokyo.", additional_kwargs={}),
-        ChatMessage(role="assistant", content="Here's an itinerary...", additional_kwargs={}),
-        ChatMessage(role="user", content="Make it more food-focused.", additional_kwargs={}),
-        ChatMessage(role="assistant", content="Here’s an updated food tour version...", additional_kwargs={}),
+        ChatMessage(role = "user", content = "Plan a 3-day trip to Tokyo.", additional_kwargs = {}),
+        ChatMessage(role = "assistant", content = "Here's an itinerary...", additional_kwargs = {}),
+        ChatMessage(role = "user", content = "Make it more food-focused.", additional_kwargs = {}),
+        ChatMessage(role = "assistant", content = "Here’s an updated food tour version...", additional_kwargs = {}),
     ]
     await mem._aput(long_convo)
-    print("Test 8 - Multi-turn conversation stored:")
+    print("Test 8 - Multi-turn conversation stored: ")
     pprint.pprint(await mem._aget([long_convo[-1]]))
 
 if __name__ == "__main__":
