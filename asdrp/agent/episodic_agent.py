@@ -1,11 +1,14 @@
-#   -------------------------------------------------------------------------
-#   File: episodic_memory.py
-#   Author: Eric Vincent Fernandes
-#   Email: evfdes@gmail.com
-#   Date: Aug 17, 2025
+#############################################################################
+# File: episodic_agent.py
 #
-#   Agent equipped with episodic memory
-#   -------------------------------------------------------------------------
+# Description: This agent is equipped with episodic memory. To run the agent, the user can manually hold a conversation
+# (see: if __name__ == "__main__") (1), the in-built test cases can be used (see: if __name__ == "__main__") (2), or
+# ChatMessage conversations can be directly passed to this agent from an external function (3).
+#
+# Author: Eric Vincent Fernandes
+# Email: evfdes@gmail.com
+# Date Modified: August 24, 2025
+#############################################################################
 
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
@@ -37,7 +40,7 @@ class EpisodicAgent:
         """Handles one conversation turn and stores it in episodic memory."""
 
         try:
-            response = await self.agent.run(user_msg = user_msg)  # Run the agent with the incoming user message
+            response = await self.agent.run(user_msg = user_msg)    # Run the agent with the incoming user message
 
             # Normalize output text
             if isinstance(response, AgentOutput):
@@ -67,15 +70,14 @@ class EpisodicAgent:
         """Clear episodic memory."""
         self.memory_block.reset_memories()
 
-#   ----------------------------
+#-------------------------------
 #   SMOKE TESTS
-#   ----------------------------
+#-------------------------------
 
 # Helper functions
 def print_result(test_name, passed):
     print(f"\n=== {test_name} ===")
     print(f"Result: {'PASSED' if passed else 'FAILED'}\n")
-
 
 def print_memories(memories):
     if not memories:
@@ -97,7 +99,6 @@ async def test_memory_storage(agent):
     print_result("Memory storage", passed)
     print_memories(memories)
 
-
 async def test_memory_deduplication(agent):
     """Duplicate inputs should not create new episodes."""
     agent.reset_memories()
@@ -108,7 +109,6 @@ async def test_memory_deduplication(agent):
     print_result("Memory deduplication", passed)
     print_memories(memories)
 
-
 async def test_multiple_episodes(agent):
     """Multiple distinct inputs create separate episodes."""
     agent.reset_memories()
@@ -117,8 +117,8 @@ async def test_multiple_episodes(agent):
     await agent.achat("What are the top restaurants in New York?")
 
     # Use _aget to retrieve the most relevant entries for each query
-    event_memories = await agent.memory_block._aget([ChatMessage(role="user", content="event")])
-    restaurant_memories = await agent.memory_block._aget([ChatMessage(role="user", content="restaurants new york")])
+    event_memories = await agent.memory_block._aget([ChatMessage(role = "user", content = "event")])
+    restaurant_memories = await agent.memory_block._aget([ChatMessage(role = "user", content = "restaurants new york")])
 
     passed = (
         contains_keywords(event_memories, ["event"]) and
@@ -138,7 +138,6 @@ async def test_memory_reset(agent):
     passed = len(memories) == 0
     print_result("Memory reset", passed)
 
-
 async def test_recall(agent):
     """Agent can recall previously stored information."""
     agent.reset_memories()
@@ -156,7 +155,6 @@ async def test_empty_input(agent):
     print_result("Empty input handling", passed)
     print(f"Agent reply:\n{reply.response_str}\n")
 
-
 async def test_whitespace_input(agent):
     """Whitespace-only input is handled gracefully."""
     agent.reset_memories()
@@ -164,7 +162,6 @@ async def test_whitespace_input(agent):
     passed = isinstance(reply.response_str, str) and len(reply.response_str) > 0
     print_result("Whitespace input handling", passed)
     print(f"Agent reply:\n{reply.response_str}\n")
-
 
 async def test_long_input(agent):
     """Very long inputs are processed without crashing."""
@@ -174,7 +171,6 @@ async def test_long_input(agent):
     passed = isinstance(reply.response_str, str) and len(reply.response_str) > 0
     print_result("Long input handling", passed)
 
-
 async def test_numeric_input(agent):
     """Numeric input is processed correctly."""
     agent.reset_memories()
@@ -182,14 +178,12 @@ async def test_numeric_input(agent):
     passed = isinstance(reply.response_str, str) and len(reply.response_str) > 0
     print_result("Numeric input handling", passed)
 
-
 async def test_special_char_input(agent):
     """Special characters in input are handled correctly."""
     agent.reset_memories()
     reply = await agent.achat("!@#$%^&*()_+")
     passed = isinstance(reply.response_str, str) and len(reply.response_str) > 0
     print_result("Special character input", passed)
-
 
 async def test_multiple_duplicate_inputs(agent):
     """Multiple repeated inputs only create one memory per unique query."""
@@ -199,7 +193,6 @@ async def test_multiple_duplicate_inputs(agent):
     memories = agent.get_all_memories()
     passed = len(memories) == 1
     print_result("Multiple duplicates handling", passed)
-
 
 async def test_sequence_of_varied_inputs(agent):
     """Sequence of different inputs stored correctly."""
@@ -256,7 +249,7 @@ async def test_memory_content_structure(agent):
     print_result("Memory content structure", passed)
 
 async def main():
-    """"Runs all test cases."""
+    """Runs all test cases."""
     agent = EpisodicAgent()
 
     await test_memory_storage(EpisodicAgent())
@@ -282,16 +275,16 @@ async def main():
 if __name__ == "__main__":
 
     #   For running test cases, use this:
-    # asyncio.run(main())
+    asyncio.run(main())
 
     #   For running the agent with human input, use this:
-    agent = EpisodicAgent()
-
-    user_input = input("Enter your input: ")
-    while user_input.strip() != "":
-        response = asyncio.run(agent.achat(user_input))
-        print(f"Response: {response}")
-        user_input = input("Enter your input: ")
-
-    print("Thank you for chatting with me!")
-    agent.reset_memories()
+    # agent = EpisodicAgent()
+    #
+    # user_input = input("Enter your input: ")
+    # while user_input.strip() != "":
+    #     reply = asyncio.run(agent.achat(user_input))
+    #     print(f"Agent Response: {reply.response_str}")
+    #     user_input = input("Enter your input: ")
+    #
+    # print("Thank you for chatting with me!")
+    # agent.reset_memories()

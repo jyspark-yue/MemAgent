@@ -1,11 +1,12 @@
 #############################################################################
-#   File:   episodic_memory.py
-#   @author Eric Vincent Fernandes
-#   @email  evfdes@gmail.com
-#   @date   Aug 2, 2025
+# File: episodic_memory.py
 #
-#   Extracts episodic data [timestamp, user input, agent output, location,
-#       outcome (was agent response accepted), reflection (learnings from interaction), and categorical tags]
+# Description: This memory block extracts episodic data: message timestamps, user input, agent output, location,
+# outcome (was the agent response accepted), reflection (learnings from interaction), and categorical tags.
+#
+# Author: Eric Vincent Fernandes
+# Email: evfdes@gmail.com
+# Date Modified: August 24, 2025
 #############################################################################
 
 import asyncio
@@ -59,13 +60,18 @@ class EpisodicMemoryBlock(BaseMemoryBlock[str]):
 
     memory_episodes: List[Document] = Field(default_factory = list)
     index: Optional[VectorStoreIndex] = None
-    llm: Optional[Any] = OpenAI(model="gpt-4.1-mini")
+    llm: Optional[Any] = None
 
     def __init__(self, name: str = "episodic_memory_block"):
         super().__init__(name = name)
-        # self.memory_episodes: List[Document] = Field(default_factory = list)
-        # self.index: Optional[VectorStoreIndex] = None
-        # self.llm: Optional[Any] = OpenAI(model = "gpt-4.1-mini")
+
+        # Configure global LlamaIndex settings
+        Settings.llm = OpenAI(model = "gpt-4.1-mini")
+        Settings.embed_model = OpenAIEmbedding(model = "text-embedding-3-small")
+
+        self.memory_episodes = []
+        self.index = None
+        self.llm = Settings.llm
 
     async def _aput(self, messages: List[ChatMessage]) -> None:
         """Processes the information in the ChatMessage object."""
@@ -73,23 +79,23 @@ class EpisodicMemoryBlock(BaseMemoryBlock[str]):
         if not messages:
             return
 
-        msg_history = "\n".join([f"{msg.role.upper()}: {msg.content}" for msg in messages])     #   Combines the provided chat history into a single, formatted string
-        prompt_text = DEFAULT_EXTRACT_PROMPT.format_messages(chat_history = msg_history)        #   Adds the provided chat history to the llm prompt
+        msg_history = "\n".join([f"{msg.role.upper()}: {msg.content}" for msg in messages])     # Combines the provided chat history into a single, formatted string
+        prompt_text = DEFAULT_EXTRACT_PROMPT.format_messages(chat_history = msg_history)        # Adds the provided chat history to the llm prompt
 
         try:
-            response = await self.llm.achat(messages = prompt_text)   # Runs llm model based on the prompt + chat history
-            # print(f"response: {response}")
-            json_response = str(response.message.content)      # Converts the ChatResponse object to a string in JSON format
-            #   json_response = response.message.content.__str__()      # Converts the ChatResponse object to a string in JSON format
-            extracted_info = json.loads(json_response)              #   Converts the JSON string to a Dictionary
+            response = await self.llm.achat(messages = prompt_text)     # Runs llm model based on the prompt + chat history
+            json_response = str(response.message.content)               # Converts the ChatResponse object to a string in JSON format
+            extracted_info = json.loads(json_response)                  # Converts the JSON string to a Dictionary
         except Exception as e:
             print(f"Error parsing JSON from LLM: {e}")
             return
 
+        # Ensures that the user input is not blank
         user_input = extracted_info.get("user_input", "").strip()
         if not user_input:
             return
 
+        # Passes necessary parameters to be added
         self.add_memory_episode(
             user_input = user_input,
             agent_output = extracted_info.get("agent_output", ""),
@@ -97,71 +103,61 @@ class EpisodicMemoryBlock(BaseMemoryBlock[str]):
             location = extracted_info.get("location"),
             reflection = extracted_info.get("reflection"),
             categorical_tags = extracted_info.get("categorical_tags", []),
-        )  # Passes necessary parameters to be added
-
-        # self.add_memory_episode(
-        #     user_input = extracted_info["user_input"],
-        #     agent_output = extracted_info["agent_output"],
-        #     outcome = extracted_info["outcome"],
-        #     location = extracted_info["location"],
-        #     reflection = extracted_info["reflection"],
-        #     categorical_tags = extracted_info["categorical_tags"]
-        # )   #   Passes necessary parameters to be added
+        )
 
     def add_memory_episode(
             self,
             user_input: str,
             agent_output: str,
-            outcome: Optional[str] = None,                  #   Success of the agent's output
-            location: Optional[str] = None,                 #   Location specified in interaction
-            reflection: Optional[str] = None,               #   Key learnings from interaction
-            categorical_tags: Optional[List[str]] = None,   #   Key tags to categorize the interaction
+            outcome: Optional[str] = None,                  # Success of the agent's output
+            location: Optional[str] = None,                 # Location specified in interaction
+            reflection: Optional[str] = None,               # Key learnings from interaction
+            categorical_tags: Optional[List[str]] = None,   # Key tags to categorize the interaction
     ) -> None:
         """Adds a new entry (episode/interaction/memory) into memory."""
 
-        # if not user_input.strip():
-        #     return
-
+        # Checks new entry with existing ones to prevent duplicates
         normalized_input = user_input.strip().lower()
-
-        for doc in self.memory_episodes:        #   Checks new entry with existing ones to prevent duplicates
+        for doc in self.memory_episodes:
             existing_input = doc.metadata.get("user_input", "").strip().lower()
             if existing_input == normalized_input:
                 return
 
-        memory_episode_id = str(uuid4())                                    #   Generates a unique identifier per episode
-        memory_episode_timestamp = datetime.now(timezone.utc).isoformat()   #   Records timestamp with timezone
-        categorical_tags = categorical_tags or []                           #   Creates an empty list (separated from initialization to prevent mutability issues)
+        memory_episode_id = str(uuid4())                                    # Generates a unique identifier per episode
+        memory_episode_timestamp = datetime.now(timezone.utc).isoformat()   # Records timestamp with timezone
+        categorical_tags = categorical_tags or []                           # Creates an empty list (separated from initialization to prevent mutability issues)
 
+        # Saves key parts of interaction into memory
         memory_episode_text = f"""
             [USER INPUT]: {user_input}
             [AGENT OUTPUT]: {agent_output}
             [OUTCOME]: {outcome}
             [LOCATION]: {location}
             [REFLECTION]: {reflection}
-        """     #   Saves key parts of interaction into memory
+        """
 
+        # For use when searching through different memories
         metadata = {
             "id": memory_episode_id,
             "timestamp": memory_episode_timestamp,
-            "user_input": user_input[:300],
-            "agent_output": agent_output[:300],
+            "user_input": user_input[:300],         # Limits user_input to 300 characters
+            "agent_output": agent_output[:300],     # Limits agent_output to 300 characters
             "location": location,
             "outcome": outcome,
             "reflection": reflection,
             "categorical_tags": categorical_tags,
-        }       #   For use when searching through different memories
+        }
 
-        memory_episode = Document(text = memory_episode_text.strip(), metadata = metadata)      #   Converts the information into a Document object
-        self.memory_episodes.append(memory_episode)                                             #   Adds the Document object to the list
+        memory_episode = Document(text = memory_episode_text.strip(), metadata = metadata)      # Converts the information into a Document object
+        self.memory_episodes.append(memory_episode)                                             # Adds the Document object to the list
 
         parser = SimpleNodeParser()  # Breaks down large memories (Documents) into smaller chunks (nodes)
         nodes = parser.get_nodes_from_documents(documents=[memory_episode])  # Converts document objects into nodes
 
         if self.index is None:
-            self.index = VectorStoreIndex(nodes)                            #   Vectorizes nodes and stores in VectorStore (LlamaIndex)
+            self.index = VectorStoreIndex(nodes)                            # Vectorizes nodes and stores in VectorStore (LlamaIndex)
         else:
-            self.index.insert(memory_episode)                               #   Converts, vectorizes, and adds a new document into the VectorStore
+            self.index.insert(memory_episode)                               # Converts, vectorizes, and adds a new document into the VectorStore
 
     async def _aget(self, messages: Optional[List[ChatMessage]] = None, **kwargs: Any) -> str:
         """Returns a string of the 5 most relevant entries (episodes/interactions/memories) based on a given query."""
@@ -171,11 +167,11 @@ class EpisodicMemoryBlock(BaseMemoryBlock[str]):
         elif self.index is None or not self.memory_episodes:
             return "ERROR: No Memory Entries Stored"
 
-        query = messages[-1].content                                                #   Identifies the query (most recent message)
-        query_engine = self.index.as_query_engine(max_num_relevant = 5)             #   Configures response synthesizer for top X entries
-        response = query_engine.query(query)                                        #   Finds the 5 most relevant entries
+        query = messages[-1].content                                                # Identifies the query (most recent message)
+        query_engine = self.index.as_query_engine(max_num_relevant = 5)             # Configures response synthesizer for top X entries
+        response = query_engine.query(query)                                        # Finds the 5 most relevant entries
 
-        return "\n".join([node.get_content() for node in response.source_nodes])    #   Extracts and returns content in relevant memory entries
+        return "\n".join([node.get_content() for node in response.source_nodes])    # Extracts and returns content in relevant memory entries
 
     def get_all_memories(self) -> List[str]:
         """Returns a list of all entries (episodes/interactions/memories) stored in memory."""
@@ -186,9 +182,9 @@ class EpisodicMemoryBlock(BaseMemoryBlock[str]):
         self.memory_episodes = []
         self.index = None
 
-#-------------------------------------
-# Main: Smoke Tests
-#-------------------------------------
+#-------------------------------
+#   SMOKE TESTS
+#-------------------------------
 
 async def smoke_test():
 
