@@ -7,7 +7,7 @@
 #
 # Author: Eric Vincent Fernandes
 # Email: evfdes@gmail.com
-# Date Modified: August 24, 2025
+# Date Modified: August 31, 2025
 #############################################################################
 
 from dotenv import load_dotenv, find_dotenv
@@ -40,9 +40,21 @@ class EpisodicAgent:
         """Handles one conversation turn and stores it in episodic memory."""
 
         try:
-            response = await self.agent.run(user_msg = user_msg)    # Run the agent with the incoming user message
+            # Retrieves relevant memory episodes
+            episodes = self.parse_memories(text = await self.memory_block._aget([ChatMessage(role = "user", content = user_msg)]))
 
-            # Normalize output text
+            # Parses relevant memory episodes into ChatMessage objects
+            relevant_chat_history = []
+            for entry in episodes:
+                if "[USER INPUT]" in entry:
+                    relevant_chat_history.append(ChatMessage(role = "user", content = entry["[USER INPUT]"]))
+                if "[AGENT OUTPUT]" in entry:
+                    relevant_chat_history.append(ChatMessage(role = "assistant", content = entry["[AGENT OUTPUT]"]))
+
+            # Runs the agent with the user message and relevant memory episodes
+            response = await self.agent.run(user_msg = user_msg, chat_history = relevant_chat_history)
+
+            # Stores output into agent_text
             if isinstance(response, AgentOutput):
                 agent_text = response.response.content
             elif isinstance(response, ChatMessage):
@@ -50,7 +62,7 @@ class EpisodicAgent:
             else:
                 agent_text = str(response)
 
-            # Store conversation turn in episodic memory
+            # Stores conversation turn in episodic memory
             await (self.memory_block._aput([
                 ChatMessage(role = "user", content = user_msg),
                 ChatMessage(role = "assistant", content = agent_text)
@@ -61,6 +73,29 @@ class EpisodicAgent:
         except Exception as e:
             print(f"Error in EpisodicAgent: {e}")
             return AgentReply(response_str = "I'm sorry, I'm having trouble processing your request. Please try again.")
+
+    def parse_memories(self, text: str) -> List[dict[str, str]] :
+        """Converts the unformatted string (bundled up memory episodes) into a list of dictionaries with str->str keys."""
+
+        relevant_memories: List[dict[str, str]] = []
+        current_entry: dict[str, str] = {}
+
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+
+            if line.startswith("[USER INPUT]"):
+                current_entry = {}  # Creates a new dictionary for each memory episode
+            if ": " in line:
+                key, value = line.split(": ", 1)
+                current_entry[key.strip()] = value.strip()  # Stores key-value pair into dictionary
+            if line.startswith("[REFLECTION]"):
+                if current_entry:
+                    relevant_memories.append(current_entry) # Adds current dictionary (complete memory episode) to dictionary
+
+        return relevant_memories
+
 
     def get_all_memories(self):
         """Return all stored episodic memories."""
