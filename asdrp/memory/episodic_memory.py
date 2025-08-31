@@ -6,7 +6,7 @@
 #
 # Author: Eric Vincent Fernandes
 # Email: evfdes@gmail.com
-# Date Modified: August 24, 2025
+# Date Modified: August 31, 2025
 #############################################################################
 
 import asyncio
@@ -22,8 +22,8 @@ from llama_index.core.llms import LLM
 from llama_index.core.memory import BaseMemoryBlock
 from llama_index.core.node_parser import SimpleNodeParser
 from llama_index.core.prompts import (RichPromptTemplate)
-from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.llms.openai import OpenAI
 from pydantic import Field
 
 DEFAULT_EXTRACT_PROMPT = RichPromptTemplate(
@@ -128,13 +128,13 @@ class EpisodicMemoryBlock(BaseMemoryBlock[str]):
         categorical_tags = categorical_tags or []                           # Creates an empty list (separated from initialization to prevent mutability issues)
 
         # Saves key parts of interaction into memory
-        memory_episode_text = f"""
-            [USER INPUT]: {user_input}
-            [AGENT OUTPUT]: {agent_output}
-            [OUTCOME]: {outcome}
-            [LOCATION]: {location}
-            [REFLECTION]: {reflection}
-        """
+        memory_episode_text = "\n".join([
+            f"[USER INPUT]: {user_input}",
+            f"[AGENT OUTPUT]: {agent_output}",
+            f"[OUTCOME]: {outcome}",
+            f"[LOCATION]: {location}",
+            f"[REFLECTION]: {reflection}",
+        ])
 
         # For use when searching through different memories
         metadata = {
@@ -152,7 +152,7 @@ class EpisodicMemoryBlock(BaseMemoryBlock[str]):
         self.memory_episodes.append(memory_episode)                                             # Adds the Document object to the list
 
         parser = SimpleNodeParser()  # Breaks down large memories (Documents) into smaller chunks (nodes)
-        nodes = parser.get_nodes_from_documents(documents=[memory_episode])  # Converts document objects into nodes
+        nodes = parser.get_nodes_from_documents(documents = [memory_episode])  # Converts document objects into nodes
 
         if self.index is None:
             self.index = VectorStoreIndex(nodes)                            # Vectorizes nodes and stores in VectorStore (LlamaIndex)
@@ -170,6 +170,10 @@ class EpisodicMemoryBlock(BaseMemoryBlock[str]):
         query = messages[-1].content                                                # Identifies the query (most recent message)
         query_engine = self.index.as_query_engine(max_num_relevant = 5)             # Configures response synthesizer for top X entries
         response = query_engine.query(query)                                        # Finds the 5 most relevant entries
+
+        if not response.source_nodes:  # No nodes retrieved
+            last_nodes = self.get_all_memories()[-5:]    # Fallback to last 5 memory episodes
+            return "\n".join(last_nodes)
 
         return "\n".join([node.get_content() for node in response.source_nodes])    # Extracts and returns content in relevant memory entries
 
