@@ -14,40 +14,59 @@
 # Contributors:
 #   @contributor    Eric Vincent Fernandes
 #                   Optimized evaluate_agents_wcost.py for faster runtime:
-#                   (Brought down eval runtime from ~18 mins for 1 question to ~9 mins for 500 questions [Dataset: longmemeval_m.json])
+#                   (Brought down eval runtime from ~18 mins for 1 question to ~X mins for 500 questions [Dataset: longmemeval_m.json, ReductiveAgent])
 #
 # Date:
 #   Created:    August 3, 2025  (Varenya Garg)
 #   Modified:   August 22, 2025 (Oliver Hsu)
-#   Modified:   September 2, 2025 (Eric Vincent Fernandes)
+#   Modified:   September 3, 2025 (Eric Vincent Fernandes)
 #############################################################################
 
-import json
 import asyncio
-from asdrp.agent.summary_agent import SummaryAgent
-import time
-from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
-from llama_index.core.base.llms.types import ChatMessage
-from llama_index.llms.openai import OpenAI
+import json
 import os
+import time
 import traceback
+
+from llama_index.core.base.llms.types import ChatMessage
+from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
+from llama_index.llms.openai import OpenAI
+
+# IMPORTANT: Import the custom agent to evaluate
+from asdrp.agent.summary_agent import SummaryAgent
+# from asdrp.agent.reductive_agent import ReductiveAgent
+# from asdrp.agent.episodic_agent import EpisodicAgent
+# from asdrp.agent.hierarchical_vector_agent import HVMAgent
 
 # Import the OpenAI RateLimitError to detect rate-limit exceptions
 try:
     from openai.error import RateLimitError
 except ImportError:
+    # Fallback definition in case openai package is not available
     class RateLimitError(Exception):
         """Fallback RateLimitError used when openai.error isn't importable at analysis time."""
         pass
 
-# To track cost
-INPUT_COST_PER_1K  = 0.0003
-OUTPUT_COST_PER_1K = 0.0006
+# Constants to compute approximate cost for API usage
+INPUT_COST_PER_1K = 0.0003      # Cost per 1000 input tokens ($)
+OUTPUT_COST_PER_1K = 0.0006     # Cost per 1000 output tokens ($)
 
-RETRY_ATTEMPTS = 3                  # number of retries on rate-limit
-RETRY_BASE_DELAY = 1.0              # seconds, exponential backoff base
+# Retry configuration for rate-limit handling
+RETRY_ATTEMPTS = 3      # Maximum number of retry attempts on RateLimitError
+RETRY_BASE_DELAY = 1.0  # Base seconds for exponential backoff between retries
+
 
 async def write_results_to_file(output_file, results, append=False):
+    """
+    Write evaluation results to a JSONL file (one JSON object per line).
+    Creates the output directory if it does not exist.
+
+    Args:
+        output_file (str): Path to save results
+        results (list[dict]): List of result dictionaries
+        append (bool): Append mode if True, overwrite if False
+    """
+
     mode = 'a' if append else 'w'
     print(f"Saving results to {output_file} (append={append})...")
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
@@ -57,7 +76,17 @@ async def write_results_to_file(output_file, results, append=False):
             f.write(json.dumps(result) + "\n")
     print(f"Results saved in {output_file}")
 
+
 async def load_chat_history(agent_object, haystack_sessions):
+    """
+    Replay chat history into the agent's memory block.
+    Each session contains turns of user and assistant messages.
+
+    Args:
+        agent_object: The agent instance whose memory is populated
+        haystack_sessions (list[list[dict]]): List of chat sessions
+    """
+
     print(f"Processing {len(haystack_sessions)} haystack sessions...")
 
     session_count = 0
@@ -74,35 +103,61 @@ async def load_chat_history(agent_object, haystack_sessions):
             # Clean content to avoid tokenizer special-token errors
             content = turn["content"].replace("<|endoftext|>", "")
 
+            # Separate user and assistant messages
             if turn["role"] == "user":
                 user_msg = ChatMessage(role="user", content=content)
             elif turn["role"] == "assistant":
                 agent_text = ChatMessage(role="assistant", content=content)
 
+                # Only push user-assistant pairs
                 if user_msg is not None and agent_text is not None:
                     try:
-                        await agent_object.memory_block._aput([user_msg, agent_text]) # memory_block variable is constant!
+                        await agent_object.memory_block._aput(
+                            [user_msg, agent_text]) # IMPORTANT: memory_block variable is constant across agents
                     except Exception as e:
                         print(f"Error processing turn: {e}")
                         traceback.print_exc()
                         continue
 
+                    # Reset temporary variables for next pair
                     user_msg = None
                     agent_text = None
 
 
 def reset_memory(agent_object):
+    """
+    Reset the agent's memory and reinitialize the agent instance.
+    Useful before processing a new question to avoid contamination
+    from previous sessions.
+    """
+
     agent_object.memory = agent_object._create_memory()
     agent_object.agent = agent_object._create_agent(agent_object.memory, [])
 
+
 class LongMemEvalRunner:
+    """
+    Class to run evaluation on a dataset of long-term memory questions.
+    Handles token tracking, cost calculation, rate-limit retry, and parallelism.
+    """
+
     def __init__(self, agent, callback_manager, handler):
         self.agent = agent
         self.callback_manager = callback_manager
         self.handler = handler
-        self.semaphore = asyncio.Semaphore(3)
+        self.semaphore = asyncio.Semaphore(3)   # Sets limit to 3 questions processed at a time
 
     async def process_question(self, question, question_num):
+        """
+        Evaluate a single question: load history, query the agent, compute token usage & cost.
+
+        Args:
+            question (dict): Contains question text, ID, and haystack_sessions
+            question_num (int): Index in the current batch
+
+        Returns:
+            dict: Results including tokens, cost, response, time, and error (if any)
+        """
 
         print(f"Processing question {question_num}: {question.get('question_id', 'unknown')}")
 
@@ -110,16 +165,20 @@ class LongMemEvalRunner:
         print(f"Item keys: {list(question.keys())}")
         print(f"Number of haystack sessions: {len(question.get('haystack_sessions', []))}")
 
+        # Record starting token counts and time
         q_t0 = time.time()
         q_prompt0 = self.handler.prompt_llm_token_count
         q_comp0 = self.handler.completion_llm_token_count
 
+        # Reset agent memory for this question
         agent_object = create_agent(self.agent, self.callback_manager)
         print("Memory reset, processing chat history...")
 
         try:
+            # Replay all haystack sessions into memory
             await load_chat_history(agent_object, question['haystack_sessions'])
 
+            # Retry mechanism for rate-limit errors
             last_exc = None
             answer_text = None
             for attempt in range(1, RETRY_ATTEMPTS + 1):
@@ -139,7 +198,7 @@ class LongMemEvalRunner:
                     raise
 
             if last_exc is not None and answer_text is None:
-                # After retries still failing with rate limit
+                # Still failing rate-limit after retries
                 raise last_exc
 
         except Exception as e:
@@ -147,13 +206,14 @@ class LongMemEvalRunner:
             traceback.print_exc()
             answer_text = f"Error: {str(e)}"
 
-        # Compute stats
+        # Compute tokens and cost for this question
         q_prompt = self.handler.prompt_llm_token_count - q_prompt0
         q_comp = self.handler.completion_llm_token_count - q_comp0
         q_time = time.time() - q_t0
         q_cost = (q_prompt / 1000.0) * INPUT_COST_PER_1K + (q_comp / 1000.0) * OUTPUT_COST_PER_1K
 
-        print(f"[Q{question_num + 1}] prompt_tokens={q_prompt}  completion_tokens={q_comp}  cost=${q_cost:.6f}  time={q_time:.2f}s")
+        print(
+            f"[Q{question_num + 1}] prompt_tokens={q_prompt}  completion_tokens={q_comp}  cost=${q_cost:.6f}  time={q_time:.2f}s")
 
         result = {
             "question_id": question["question_id"],
@@ -170,13 +230,24 @@ class LongMemEvalRunner:
         return result
 
     async def process_question_worker(self, item, i):
-        """Worker wrapper: acquire semaphore, run question, ensure release, return a dict/result."""
+        """
+        Worker wrapper: manage semaphore acquisition, run question processing, handle exceptions.
+
+        Args:
+            item (dict): Question item
+            i (int): Index in dataset
+
+        Returns:
+            dict: Result dictionary including error info if exceptions occur
+        """
 
         acquired = False
         try:
+            # Acquire semaphore with timeout
             await asyncio.wait_for(self.semaphore.acquire(), timeout=3600)
             acquired = True
         except asyncio.TimeoutError:
+            # Return an error if semaphore acquisition times out
             return {
                 "question_id": item.get("question_id", f"idx_{i}"),
                 "hypothesis": f"Error: timed out waiting for semaphore",
@@ -188,6 +259,7 @@ class LongMemEvalRunner:
             }
 
         try:
+            # Process the question normally
             result = await self.process_question(item, i)
             return result
         except Exception as e:
@@ -203,7 +275,7 @@ class LongMemEvalRunner:
                 "traceback": tb
             }
         finally:
-        # Releases the semaphore only if acquired it
+            # Releases the semaphore only if acquired
             if acquired:
                 try:
                     self.semaphore.release()
@@ -211,7 +283,16 @@ class LongMemEvalRunner:
                     pass
 
     async def evaluate_on_dataset(self, data_file, output_file, num_questions, start_index=0):
+        """
+        Run evaluation on a dataset of questions in parallel, respecting semaphore limits.
+        Writes results to file and prints overall cost & time.
 
+        Args:
+            data_file (str): JSON dataset path
+            output_file (str): File to save results
+            num_questions (int): Number of questions to process
+            start_index (int): Index in dataset to start processing
+        """
 
         print(f"Loading dataset from {data_file}...")
         with open(data_file, 'r') as f:
@@ -219,33 +300,35 @@ class LongMemEvalRunner:
 
         print(f"Dataset loaded with {len(dataset)} total questions")
 
+        # Slice dataset for partial evaluation runs
         if num_questions is not None:
-            dataset = dataset[start_index:start_index+num_questions]
+            dataset = dataset[start_index:start_index + num_questions]
             print(f"Processing questions [{start_index}:{start_index + num_questions}] "
-              f"(total this run: {len(dataset)})")
+                  f"(total this run: {len(dataset)})")
         else:
             dataset = dataset[start_index:]
             print(f"Processing questions [{start_index}:] (total this run: {len(dataset)})")
 
         print(f"Running {len(dataset)} questions in parallel...")
 
-        # To track time
+        # Record starting token counts and time for overall metrics
         overall_t0 = time.time()
         overall_prompt0 = self.handler.prompt_llm_token_count
-        overall_comp0   = self.handler.completion_llm_token_count
+        overall_comp0 = self.handler.completion_llm_token_count
 
-        # Kick off all questions in parallel, semaphore limits to 3 at a time
+        # Kick off all workers in parallel, semaphore limits to 3 at a time
         tasks = [asyncio.create_task(self.process_question_worker(item, i)) for i, item in enumerate(dataset)]
         results = await asyncio.gather(*tasks)
 
+        # Determine append mode based on start index
         append_mode = start_index > 0
         await write_results_to_file(output_file, results, append=append_mode)
 
-        # Calculate cost and time
+        # Calculate overall token usage and cost
         overall_prompt = self.handler.prompt_llm_token_count - overall_prompt0
-        overall_comp   = self.handler.completion_llm_token_count - overall_comp0
-        overall_time   = time.time() - overall_t0
-        overall_cost   = (overall_prompt/1000.0)*INPUT_COST_PER_1K + (overall_comp/1000.0)*OUTPUT_COST_PER_1K
+        overall_comp = self.handler.completion_llm_token_count - overall_comp0
+        overall_time = time.time() - overall_t0
+        overall_cost = (overall_prompt / 1000.0) * INPUT_COST_PER_1K + (overall_comp / 1000.0) * OUTPUT_COST_PER_1K
 
         print("\n=== Run summary ===")
         print(f"Total prompt tokens:     {overall_prompt}")
@@ -254,33 +337,50 @@ class LongMemEvalRunner:
         print(f"Estimated total cost:    ${overall_cost:.6f}")
         print(f"Total wall time:         {overall_time:.2f}s")
 
+
 def create_agent(agent_class, callback_manager=None):
-    # Build the LLM with token tracker
+    """
+    Create an instance of the agent with LLM and token tracker attached.
+
+    Args:
+        agent_class: The class of the agent to instantiate
+        callback_manager: Callback manager for token tracking
+
+    Returns:
+        agent_instance: Initialized agent
+    """
+
     llm = OpenAI(model="gpt-4o",
                  callback_manager=callback_manager)
     agent_instance = agent_class(llm=llm)
     return agent_instance
 
+
 def main():
-    
-    # If starting from specific question in dataset
+    """
+    Entry point for evaluation script. Configures handler, callback manager,
+    agent runner, dataset, and output paths. Runs evaluation asynchronously.
+    """
+
     start_index = 0
     num_questions = 500
 
     handler = TokenCountingHandler()
     cb_manager = CallbackManager(handlers=[handler])
 
-    runner = LongMemEvalRunner(SummaryAgent, cb_manager, handler)
-    
-    # Change according to dataset in use
+    runner = LongMemEvalRunner(SummaryAgent, cb_manager, handler)   # IMPORTANT: CHANGE BASED ON AGENT
+
+    # Paths for dataset and results
     data_file = "eval/data/custom_history/longmemeval_m.json"
+    output_file = "results/summary_agent_responses.json"            # IMPORTANT: CHANGE BASED ON AGENT
 
-    # Change according to agent analyzed
-    output_file = "results/summary_agent_responses.json"
-
+    # Ensure output directory exists
     os.makedirs("results", exist_ok=True)
-    
-    asyncio.run(runner.evaluate_on_dataset(data_file, output_file, start_index=start_index, num_questions=num_questions))
+
+    # Run evaluation asynchronously
+    asyncio.run(
+        runner.evaluate_on_dataset(data_file, output_file, start_index=start_index, num_questions=num_questions))
+
 
 if __name__ == "__main__":
     main()
