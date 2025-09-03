@@ -48,8 +48,8 @@ except ImportError:
         pass
 
 # Constants to compute approximate cost for API usage
-INPUT_COST_PER_1K = 0.0003      # Cost per 1000 input tokens ($)
-OUTPUT_COST_PER_1K = 0.0006     # Cost per 1000 output tokens ($)
+INPUT_COST_PER_1K = 0.0025  # Cost per 1000 input tokens ($)    [$2.50 * (1000/1000000)]
+OUTPUT_COST_PER_1K = 0.010  # Cost per 1000 output tokens ($)   [$10.00 * (1000/1000000)]
 
 # Retry configuration for rate-limit handling
 RETRY_ATTEMPTS = 3      # Maximum number of retry attempts on RateLimitError
