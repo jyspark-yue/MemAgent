@@ -32,11 +32,15 @@ from asdrp.memory.proposition_extraction_memory import PropositionExtractionMemo
 class ReductiveAgent:
     def __init__(
         self,
-        llm: LLM = OpenAI(model="gpt-4.1-mini"),
+        llm: LLM = OpenAI(model="gpt-4o"),
         memory: Memory = None,
         tools: List[FunctionTool] = [],
     ):
         self.llm = llm
+        self.memory_block = PropositionExtractionMemoryBlock(
+            name="proposition_extraction_memory",
+            max_propositions=50,
+        )
         self.memory = memory
         self.agent = self._create_agent(memory, tools)
 
@@ -74,18 +78,13 @@ class ReductiveAgent:
         )
         
     def _create_memory(self) -> Memory:
-        proposition_extraction_memory = PropositionExtractionMemoryBlock(
-            name="proposition_extraction_memory",
-            llm=self.llm,
-            max_propositions=50,
-        )
         return Memory.from_defaults(
             session_id="proposition_agent",
             token_limit=50,                       # size of the entire working memory 
             chat_history_token_ratio=0.7,         # ratio of chat history to total tokens
             token_flush_size=10,                  # number of tokens to flush when memory is full
             insert_method=InsertMethod.SYSTEM,
-            memory_blocks=[proposition_extraction_memory]
+            memory_blocks=[self.memory_block]
         )
     
 

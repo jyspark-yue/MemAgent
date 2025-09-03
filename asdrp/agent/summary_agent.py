@@ -31,13 +31,16 @@ from asdrp.memory.condensed_memory import CondensedMemoryBlock
 class SummaryAgent:
     def __init__(
         self,
-        llm: LLM = OpenAI(model="gpt-4.1-mini"),
-        memory: Memory = None,
+        llm: LLM = OpenAI(model="gpt-4o"),
         tools: List[FunctionTool] = [],
     ):
         self.llm = llm
-        self.memory = memory
-        self.agent = self._create_agent(memory, tools)
+        self.memory_block = CondensedMemoryBlock(
+            name="summary_agent",
+            token_limit=50
+        )
+        self.memory = self._create_memory()
+        self.agent = self._create_agent(self.memory, tools)
 
     async def achat(self, user_msg: str) -> AgentReply:
         try:
@@ -60,14 +63,13 @@ class SummaryAgent:
         )
         
     def _create_memory(self) -> Memory:
-        condensed_memory = CondensedMemoryBlock(name="summary_agent", token_limit=50)
         return Memory.from_defaults(
             session_id="proposition_agent",
             token_limit=50,                       # size of the entire working memory 
             chat_history_token_ratio=0.7,         # ratio of chat history to total tokens
             token_flush_size=10,                  # number of tokens to flush when memory is full
             insert_method=InsertMethod.SYSTEM,
-            memory_blocks=[condensed_memory]
+            memory_blocks=[self.memory_block]
         )
     
 
