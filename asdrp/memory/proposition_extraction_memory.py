@@ -10,15 +10,17 @@
 #############################################################################
 
 import re
+import time
 from typing import Any, List, Optional, Union
 
 from llama_index.core.base.llms.types import ChatMessage
 from llama_index.core.bridge.pydantic import Field, field_validator
+from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
 from llama_index.core.llms import LLM
 from llama_index.core.memory.memory import BaseMemoryBlock
 from llama_index.core.prompts import (BasePromptTemplate, PromptTemplate,
                                       RichPromptTemplate)
-from llama_index.core.settings import Settings
+from llama_index.llms.openai import OpenAI
 
 DEFAULT_EXTRACT_PROMPT = RichPromptTemplate("""You are a comprehensive information extraction system designed to identify key propositions from conversations.
 
@@ -77,9 +79,8 @@ Return ONLY the condensed propositions in this exact format:
 If no new propositions are present, return: <propositions></propositions>""")
 
 
-def get_default_llm() -> LLM:
-    return Settings.llm
-
+def get_default_llm(callback_manager=CallbackManager(handlers=[TokenCountingHandler()])) -> LLM:
+    return OpenAI(model="o4-mini", callback_manager=callback_manager)
 
 class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
     """
@@ -94,7 +95,7 @@ class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
         default="ExtractedPropositions", description="The name of the memory block."
     )
     llm: LLM = Field(
-        default_factory=get_default_llm,
+        default_factory=lambda: get_default_llm(),
         description="The LLM to use for proposition extraction.",
     )
     propositions: List[str] = Field(
@@ -103,6 +104,15 @@ class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
     )
     max_propositions: int = Field(
         default=50, description="The maximum number of propositions to store."
+    )
+    input_tokens: int = Field(
+        default=0, description="The number of tokens passed into the LLM when loading the chat history."
+    )
+    output_tokens: int = Field(
+        default=0, description="The number of tokens returned by the LLM when loading the chat history."
+    )
+    load_chat_history_time: float = Field(
+        default=0, description="The duration of time it took to load the chat history."
     )
     proposition_extraction_prompt_template: BasePromptTemplate = Field(
         default=DEFAULT_EXTRACT_PROMPT,
@@ -140,6 +150,11 @@ class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
         if not messages:
             return
 
+        # Track before call
+        start_time = time.time()
+        initial_input_tokens = getattr(self.llm.callback_manager.handlers, "prompt_llm_token_count", 0)
+        initial_output_tokens = getattr(self.llm.callback_manager.handlers, "completion_llm_token_count", 0)
+
         # Format existing propositions for the prompt
         existing_propositions_text = ""
         if self.propositions:
@@ -154,6 +169,8 @@ class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
 
         # Get the propositions extraction
         response = await self.llm.achat(messages=[*messages, *prompt_messages])
+
+        # paused_memory_time = time.time()
 
         # Parse the XML response to extract propositions
         propositions_text = response.message.content or ""
@@ -178,6 +195,12 @@ class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
             new_propositions = self._parse_propositions_xml(response.message.content or "")
             if new_propositions:
                 self.propositions = new_propositions
+
+        # memory_time = (time.time() - paused_memory_time) + (unpaused_memory_time - initial_memory_time)
+        self.load_chat_history_time = time.time() - start_time
+        self.input_tokens = getattr(self.llm.callback_manager.handlers, "prompt_llm_token_count", 0) - initial_input_tokens
+        self.output_tokens = getattr(self.llm.callback_manager.handlers, "completion_llm_token_count", 0) - initial_output_tokens
+
 
     def _parse_propositions_xml(self, xml_text: str) -> List[str]:
         """Parse propositions from XML format."""

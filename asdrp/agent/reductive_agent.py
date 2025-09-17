@@ -12,12 +12,12 @@
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
 
-import argparse
 import asyncio
-from datetime import datetime
 from typing import List
+import time
 
 from llama_index.core.agent.workflow import FunctionAgent, AgentOutput
+from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
 from llama_index.core.base.llms.types import ChatMessage
 from llama_index.core.tools import FunctionTool
 from llama_index.core.llms import LLM
@@ -29,10 +29,13 @@ from llama_index.llms.openai import OpenAI
 from asdrp.agent.base import AgentReply
 from asdrp.memory.proposition_extraction_memory import PropositionExtractionMemoryBlock
 
+def get_default_llm(callback_manager=CallbackManager(handlers=[TokenCountingHandler()])) -> LLM:
+    return OpenAI(model="o4-mini", callback_manager=callback_manager)
+
 class ReductiveAgent:
     def __init__(
         self,
-        llm: LLM = OpenAI(model="gpt-4o"),
+        llm: LLM = get_default_llm(),
         memory: Memory = None,
         tools: List[FunctionTool] = [],
     ):
@@ -43,9 +46,17 @@ class ReductiveAgent:
         )
         self.memory = memory
         self.agent = self._create_agent(memory, tools)
+        self.query_input_tokens = 0
+        self.query_output_tokens = 0
+        self.query_time = 0
 
     async def achat(self, user_msg: str) -> AgentReply:
         try:
+            # Measure tokens used by memory block/agent
+            initial_query_input_tokens = getattr(self.llm.callback_manager.handlers, "prompt_llm_token_count", 0)
+            initial_query_output_tokens = getattr(self.llm.callback_manager.handlers, "completion_llm_token_count", 0)
+            initial_query_time = time.time()
+
             # Prepend known propositions to the user message if available, with explicit instruction
             propositions = ""
             if self.memory and hasattr(self.memory, "memory_blocks"):
@@ -60,6 +71,12 @@ class ReductiveAgent:
                             )
             full_msg = propositions + user_msg
             response = await self.agent.run(user_msg=full_msg, memory=self.memory)
+
+            # Compute query tokens and cost for this question
+            self.query_time = time.time() - initial_query_time
+            self.query_input_tokens = getattr(self.llm.callback_manager.handlers, "prompt_llm_token_count", 0) - initial_query_input_tokens
+            self.query_output_tokens = getattr(self.llm.callback_manager.handlers, "completion_llm_token_count", 0) - initial_query_output_tokens
+
             if isinstance(response, AgentOutput):
                 return AgentReply(response_str=response.response.content)
             elif isinstance(response, ChatMessage):
@@ -67,6 +84,9 @@ class ReductiveAgent:
             else:
                 return AgentReply(response_str=str(response))
         except Exception as e:
+            self.query_time = 0
+            self.query_input_tokens = 0
+            self.query_output_tokens = 0
             print(f"Error in ReductiveAgent: {e}")
             return AgentReply(response_str="I'm sorry, I'm having trouble processing your request. Please try again.")
 
