@@ -80,7 +80,7 @@ If no new propositions are present, return: <propositions></propositions>""")
 
 
 def get_default_llm(callback_manager=CallbackManager(handlers=[TokenCountingHandler()])) -> LLM:
-    return OpenAI(model="o4-mini", callback_manager=callback_manager)
+    return OpenAI(model="gpt-4o-mini", callback_manager=callback_manager)
 
 class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
     """
@@ -112,7 +112,7 @@ class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
         default=0, description="The number of tokens returned by the LLM when loading the chat history."
     )
     load_chat_history_time: float = Field(
-        default=0, description="The duration of time it took to load the chat history."
+        default=0.0, description="The duration of time it took to load the chat history."
     )
     proposition_extraction_prompt_template: BasePromptTemplate = Field(
         default=DEFAULT_EXTRACT_PROMPT,

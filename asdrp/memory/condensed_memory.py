@@ -11,15 +11,16 @@
 
 import asyncio
 import pprint
+import time
 from typing import Any, List, Optional
 
 import tiktoken
 from llama_index.core.llms import ChatMessage, TextBlock
-from llama_index.core.memory import BaseMemoryBlock, Memory
+from llama_index.core.memory import BaseMemoryBlock
 from pydantic import Field
 
-# the latest supported encoding model by tiktoken is gpt-4o as of 7/2/2025
-ENCODING_MODEL = "gpt-4o"
+# the latest supported encoding model by tiktoken is gpt-4o as of 7/2/2025 #CHANGED TO gpt-4o-mini FOR CONSISTENCY
+ENCODING_MODEL = "gpt-4o-mini"
 DEFAULT_TOKEN_LIMIT = 50000
 
 class CondensedMemoryBlock(BaseMemoryBlock[str]):
@@ -34,7 +35,11 @@ class CondensedMemoryBlock(BaseMemoryBlock[str]):
     """
     current_memory: List[str] = Field(default_factory=list)
     token_limit: int = Field(default=DEFAULT_TOKEN_LIMIT)
-    tokenizer: tiktoken.Encoding = tiktoken.encoding_for_model(ENCODING_MODEL) 
+    tokenizer: tiktoken.Encoding = tiktoken.get_encoding("o200k_base")
+    input_tokens: int = Field(default=0, description="The number of tokens passed into the LLM when loading the chat history.")
+    output_tokens: int = Field(default=0, description="The number of tokens returned by the LLM when loading the chat history. (Unneeded Here)")
+    load_chat_history_time: float = Field(default=0.0, description="The duration of time it took to load the chat history.")
+
 
     async def _aget(
         self, messages: Optional[List[ChatMessage]] = None, **block_kwargs: Any
@@ -44,6 +49,14 @@ class CondensedMemoryBlock(BaseMemoryBlock[str]):
 
     async def _aput(self, messages: List[ChatMessage]) -> None:
         """Push messages into the memory block. (Only handles text content)"""
+
+        # Skip if no messages
+        if not messages:
+            return
+
+        start_time = time.time()
+        self.input_tokens = 0
+
         # construct a string for each message
         for message in messages:
             text_contents = "\n".join(
@@ -69,6 +82,9 @@ class CondensedMemoryBlock(BaseMemoryBlock[str]):
 
             self.current_memory.append(memory_str)
 
+            # Count tokens for this new message (input tokens)
+            self.input_tokens += len(self.tokenizer.encode(memory_str))
+
         # ensure this memory block doesn't get too large
         message_length = sum(
             len(self.tokenizer.encode(message))
@@ -80,6 +96,8 @@ class CondensedMemoryBlock(BaseMemoryBlock[str]):
                 len(self.tokenizer.encode(message))
                 for message in self.current_memory
             )
+
+        self.load_chat_history_time = time.time() - start_time
 
 #-------------------------------------
 # Main: smoke tests

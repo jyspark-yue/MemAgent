@@ -10,16 +10,14 @@
 #               and measuring how well the agent answers long-term memory questions after replaying the chat history.
 #   @author     Oliver Hsu
 #               Implemented cost tracking in evaluate_reductive_agent.py.
-#
-# Contributors:
-#   @contributor    Eric Vincent Fernandes
-#                   Optimized evaluate_agents_wcost.py for faster runtime:
-#                   (Brought down eval runtime from ~18 mins for 1 question to ~X mins for 500 questions [Dataset: longmemeval_m.json, ReductiveAgent])
+#   @author     Eric Vincent Fernandes
+#               Optimized evaluate_agents_wcost.py for faster runtime and adjusted cost tracking to be more accurate:
+#               (Brought down eval runtime from ~18 mins for 1 question to ~8 mins for 500 questions [Dataset: longmemeval_m.json, CondensedMemoryBlock])
 #
 # Date:
 #   Created:    August 3, 2025  (Varenya Garg)
 #   Modified:   August 22, 2025 (Oliver Hsu)
-#   Modified:   September 3, 2025 (Eric Vincent Fernandes)
+#   Modified:   September 19, 2025 (Eric Vincent Fernandes)
 #############################################################################
 
 import asyncio
@@ -32,10 +30,9 @@ from llama_index.core.base.llms.types import ChatMessage
 from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
 from llama_index.llms.openai import OpenAI
 
-# IMPORTANT: Import the custom agent to evaluate
-# from asdrp.agent.summary_agent import SummaryAgent
-from asdrp.agent.reductive_agent import ReductiveAgent
-
+# IMPORTANT: IMPORT THE CUSTOM AGENT TO EVALUATE
+from asdrp.agent.summary_agent import SummaryAgent
+# from asdrp.agent.reductive_agent import ReductiveAgent
 # from asdrp.agent.episodic_agent import EpisodicAgent
 # from asdrp.agent.hierarchical_vector_agent import HVMAgent
 
@@ -49,8 +46,8 @@ except ImportError:
         pass
 
 # Constants to compute approximate cost for API usage (o4-mini)
-INPUT_COST_PER_1K = 0.0011  # Cost per 1000 input tokens ($)    [$1.10 * (1000/1000000)]
-OUTPUT_COST_PER_1K = 0.0044  # Cost per 1000 output tokens ($)   [$4.40 * (1000/1000000)]
+INPUT_COST_PER_1K = 0.00015  # Cost per 1000 input tokens ($)    [$0.15 * (1000/1000000)]
+OUTPUT_COST_PER_1K = 0.00060  # Cost per 1000 output tokens ($)   [$0.60 * (1000/1000000)]
 
 # Retry configuration for rate-limit handling
 RETRY_ATTEMPTS = 5      # Maximum number of retry attempts on RateLimitError
@@ -114,7 +111,7 @@ async def load_chat_history(agent_object, haystack_sessions):
                 if user_msg is not None and agent_text is not None:
                     try:
                         await agent_object.memory_block._aput(
-                            [user_msg, agent_text]) # IMPORTANT: memory_block variable is constant across agents
+                            [user_msg, agent_text]) # IMPORTANT: memory_block variable name is constant across agents
                     except Exception as e:
                         print(f"Error processing turn: {e}")
                         traceback.print_exc()
@@ -177,18 +174,11 @@ class LongMemEvalRunner:
             # Replay all haystack sessions into memory
             await load_chat_history(agent_object, question['haystack_sessions'])
 
-            lch_input_tokens = self.agent.memory_block.input_tokens
-            lch_output_tokens = self.agent.memory_block.output_tokens
-            lch_time = self.agent.memory_block.load_chat_history_time
+            lch_input_tokens = agent_object.memory_block.input_tokens
+            lch_output_tokens = agent_object.memory_block.output_tokens
+            lch_time = agent_object.memory_block.load_chat_history_time
 
             lch_cost = (lch_input_tokens / 1000.0) * INPUT_COST_PER_1K + (lch_output_tokens / 1000.0) * OUTPUT_COST_PER_1K
-
-            # REMOVE ALL PROMPT STUFF ANMD MOVE AROUND THE LLM CALL, OVER HER CREATE VARS AND USE GLOBAL FIELDS TO ACCESS agent_object.memory_block.xyz
-
-            # Measure tokens used by memory block/agent
-            # initial_query_input_tokens = self.handler.prompt_llm_token_count
-            # initial_query_output_tokens = self.handler.completion_llm_token_count
-            # initial_query_time = time.time()
 
             # Retry mechanism for rate-limit errors
             last_exc = None
@@ -213,15 +203,9 @@ class LongMemEvalRunner:
                 # Still failing rate-limit after retries
                 raise last_exc
 
-            # Compute query tokens and cost for this question
-            # query_time = time.time() - initial_query_time
-            # query_input_tokens = self.handler.prompt_llm_token_count - initial_query_input_tokens
-            # query_output_tokens = self.handler.completion_llm_token_count - initial_query_output_tokens
-            # query_cost = (query_input_tokens / 1000.0) * INPUT_COST_PER_1K + (query_output_tokens / 1000.0) * OUTPUT_COST_PER_1K
-
-            query_input_tokens = self.agent.query_input_tokens
-            query_output_tokens = self.agent.query_output_tokens
-            query_time = self.agent.query_time
+            query_input_tokens = agent_object.query_input_tokens
+            query_output_tokens = agent_object.query_output_tokens
+            query_time = agent_object.query_time
             query_cost = (query_input_tokens / 1000.0) * INPUT_COST_PER_1K + (query_output_tokens / 1000.0) * OUTPUT_COST_PER_1K
 
         except Exception as e:
@@ -254,8 +238,6 @@ class LongMemEvalRunner:
         if isinstance(answer_text, str) and answer_text.startswith("Error:"):
             result["error"] = answer_text
             print(f"ERROR={answer_text}")
-        else:
-            print(f"[Q{question_num + 1}] overall_input_tokens={overall_input_tokens}  overall_output_tokens={overall_output_tokens}  cost=${overall_cost:.6f}  time={overall_time:.2f}s")
 
         return result
 
@@ -359,8 +341,6 @@ class LongMemEvalRunner:
 
         # Record starting token counts and time for overall metrics for the entire dataset
         overall_start_time = time.time()
-        # overall_prompt0 = self.handler.prompt_llm_token_count
-        # overall_comp0 = self.handler.completion_llm_token_count
 
         # Kick off all workers in parallel, semaphore limits to 3 at a time
         tasks = [asyncio.create_task(self.process_question_worker(item, i)) for i, item in enumerate(dataset)]
@@ -369,12 +349,6 @@ class LongMemEvalRunner:
         # Determine append mode based on start index
         append_mode = start_index > 0
         await write_results_to_file(output_file, results, append=append_mode)
-
-        # # Calculate overall token usage and cost
-        # overall_prompt = self.handler.prompt_llm_token_count - overall_prompt0
-        # overall_comp = self.handler.completion_llm_token_count - overall_comp0
-        # overall_time = time.time() - overall_t0
-        # overall_cost = (overall_prompt / 1000.0) * INPUT_COST_PER_1K + (overall_comp / 1000.0) * OUTPUT_COST_PER_1K
 
         total_memory_input_tokens = sum(r.get("memory_input_tokens", 0) for r in results)
         total_memory_output_tokens = sum(r.get("memory_output_tokens", 0) for r in results)
@@ -395,19 +369,7 @@ class LongMemEvalRunner:
         if (total_combined_input_tokens != (total_memory_input_tokens + total_query_input_tokens)):
             print("CALCULATION DIFFERENCE DETECTED!!!!!!!!!!")
 
-        # Combined totals (from per-question sums)
-        # combined_prompt = total_memory_input_tokens + total_query_input_tokens
-        # combined_comp = total_memory_output_tokens + total_query_output_tokens
-        # combined_cost = total_memory_cost + total_query_cost
-
         overall_time = time.time() - overall_start_time
-
-        # print("\n=== Run summary ===")
-        # print(f"Total prompt tokens:     {overall_prompt}")
-        # print(f"Total completion tokens: {overall_comp}")
-        # print(f"Total tokens:            {overall_prompt + overall_comp}")
-        # print(f"Estimated total cost:    ${overall_cost:.6f}")
-        # print(f"Total wall time:         {overall_time:.2f}s")
 
         print("\n=== Run summary ===")
         print(f"Memory loading prompt tokens:           {total_memory_input_tokens}")
@@ -438,8 +400,7 @@ def create_agent(agent_class, callback_manager=None):
         agent_instance: Initialized agent
     """
 
-    llm = OpenAI(model="o4-mini", callback_manager=CallbackManager(handlers=[TokenCountingHandler()]))
-                 # callback_manager=callback_manager)
+    llm = OpenAI(model="gpt-4o-mini", callback_manager=CallbackManager(handlers=[TokenCountingHandler()]))
     agent_instance = agent_class(llm=llm)
     return agent_instance
 
@@ -456,11 +417,11 @@ def main():
     handler = TokenCountingHandler()
     cb_manager = CallbackManager(handlers=[handler])
 
-    runner = LongMemEvalRunner(ReductiveAgent, cb_manager, handler)   # IMPORTANT: CHANGE BASED ON AGENT
+    runner = LongMemEvalRunner(SummaryAgent, cb_manager, handler)   # IMPORTANT: CHANGE BASED ON AGENT
 
     # Paths for dataset and results
     data_file = "eval/data/custom_history/longmemeval_m.json"
-    output_file = "results/reductive_agent_responses.json"            # IMPORTANT: CHANGE BASED ON AGENT
+    output_file = "results/summary_agent_responses.json"            # IMPORTANT: CHANGE BASED ON AGENT
 
     # Ensure output directory exists
     os.makedirs("results", exist_ok=True)
