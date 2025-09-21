@@ -1,12 +1,18 @@
 #############################################################################
-# condensed_memory.py
+# File: condensed_memory.py
 #
-# A condensed memory block that maintains context while staying within 
-# reasonable memory limits.
+# Description:
+#   A condensed memory block that maintains context while staying within reasonable memory limits.
 #
-# @author Theodore Mui
-# @email  theodoremui@gmail.com
-# Tue Jul 2 2025
+# Authors:
+#   @author     Theodore Mui (theodoremui@gmail.com)
+#               - Created summary_agent.py
+#   @author     Eric Vincent Fernandes
+#               - Implemented tracking for token/cost metrics
+#
+# Date:
+#   Created:    July 2, 2025  (Theodore Mui)
+#   Modified:   September 20, 2025 (Eric Vincent Fernandes)
 #############################################################################
 
 import asyncio
@@ -19,8 +25,6 @@ from llama_index.core.llms import ChatMessage, TextBlock
 from llama_index.core.memory import BaseMemoryBlock
 from pydantic import Field
 
-# the latest supported encoding model by tiktoken is gpt-4o as of 7/2/2025 #CHANGED TO gpt-4o-mini FOR CONSISTENCY
-# ENCODING_MODEL = "o4-mini"
 DEFAULT_TOKEN_LIMIT = 50000
 
 class CondensedMemoryBlock(BaseMemoryBlock[str]):

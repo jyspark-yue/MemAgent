@@ -1,12 +1,18 @@
 #############################################################################
-# reductive_agent.py
+# File: reductive_agent.py
 #
-# agent for reductive reasoning by inferring propositions from conversation
-# and then summarizing the conversation
+# Description:
+#   Agent for reductive reasoning by inferring propositions from conversation and then summarizing the conversation
 #
-# @author Theodore Mui
-# @email  theodoremui@gmail.com
-# Fri Jul 04 11:30:53 PDT 2025
+# Authors:
+#   @author     Theodore Mui (theodoremui@gmail.com)
+#               - Created reductive_agent.py
+#   @author     Eric Vincent Fernandes
+#               - Implemented tracking for token/cost metrics
+#
+# Date:
+#   Created:    July 4, 2025  (Theodore Mui)
+#   Modified:   September 20, 2025 (Eric Vincent Fernandes)
 #############################################################################
 
 from dotenv import load_dotenv, find_dotenv
@@ -32,31 +38,7 @@ from asdrp.agent.base import AgentReply
 from asdrp.memory.proposition_extraction_memory import PropositionExtractionMemoryBlock
 
 def get_default_llm(callback_manager=CallbackManager(handlers=[TokenCountingHandler()])) -> LLM:
-    return OpenAI(model="o4-mini", callback_manager=callback_manager)
-
-
-def parse_props_from_xml(xml_text: str) -> List[str]:
-    # simple regex parse (same as your memory block)
-    pattern = r"<proposition>(.*?)</proposition>"
-    matches = re.findall(pattern, xml_text, re.DOTALL)
-    return [m.strip() for m in matches if m.strip()]
-
-
-def select_relevant_propositions(user_msg: str, propositions: List[str], top_k=5):
-    # naive keyword overlap scoring
-    user_tokens = set(w for w in re.findall(r"\w+", user_msg.lower()))
-    scored = []
-    for p in propositions:
-        p_tokens = set(re.findall(r"\w+", p.lower()))
-        score = len(user_tokens.intersection(p_tokens))
-        scored.append((score, p))
-    scored.sort(reverse=True, key=lambda x: x[0])
-    # if scores are zero, fall back to last-N
-    top = [p for s, p in scored if s > 0][:top_k]
-    if not top:
-        top = propositions[-top_k:]
-    return top
-
+    return OpenAI(model="gpt-5-nano-2025-08-07", temperature=0.0, timeout=1200.0, callback_manager=callback_manager)
 
 class ReductiveAgent:
     def __init__(
@@ -74,9 +56,9 @@ class ReductiveAgent:
         self.memory = memory
         self.agent = self._create_agent(memory, tools)
         self.tokenizer: tiktoken.Encoding = tiktoken.get_encoding("o200k_base")
-        self.query_input_tokens = 0
-        self.query_output_tokens = 0
-        self.query_time = 0
+        self.query_input_tokens = 0     # Number of tokens passed into the LLM within this agent
+        self.query_output_tokens = 0    # Number of tokens returned by the LLM within this agent
+        self.query_time = 0             # Duration of time the LLM took to respond
 
     async def achat(self, user_msg: str) -> AgentReply:
         try:
@@ -89,12 +71,8 @@ class ReductiveAgent:
             if self.memory and hasattr(self.memory, "memory_blocks"):
                 for block in self.memory.memory_blocks:
                     if isinstance(block, PropositionExtractionMemoryBlock):
-                        props_xml = await block._aget()
-                        props_list = parse_props_from_xml(props_xml)
-                        relevant_props = select_relevant_propositions(user_msg, props_list, top_k=5)
-
-                        if relevant_props:
-                            props = "\n".join(relevant_props)
+                        props = await block._aget()
+                        if props:
                             propositions = (
                                 "Known propositions from conversation so far:\n"
                                 f"{props}\n"
@@ -116,6 +94,7 @@ class ReductiveAgent:
             else:
                 self.query_output_tokens = len(self.tokenizer.encode(str(response)))
                 return AgentReply(response_str=str(response))
+
         except Exception as e:
             self.query_time = 0
             self.query_input_tokens = 0
@@ -129,17 +108,17 @@ class ReductiveAgent:
             memory=memory,
             tools=tools,
         )
-        
+
     def _create_memory(self) -> Memory:
         return Memory.from_defaults(
             session_id="proposition_agent",
-            token_limit=50,                       # size of the entire working memory 
+            token_limit=50,                       # size of the entire working memory
             chat_history_token_ratio=0.7,         # ratio of chat history to total tokens
             token_flush_size=10,                  # number of tokens to flush when memory is full
             insert_method=InsertMethod.SYSTEM,
             memory_blocks=[self.memory_block]
         )
-    
+
 
 #-----------------------------------------
 # Main: proposition extraction smoke tests
@@ -242,4 +221,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    
+

@@ -1,11 +1,18 @@
 #############################################################################
-# summary_agent.py
+# File: summary_agent.py
 #
-# agent for summarizing conversations
+# Description:
+#   Agent for summarizing conversations
 #
-# @author Theodore Mui
-# @email  theodoremui@gmail.com
-# Fri Jul 04 11:30:53 PDT 2025
+# Authors:
+#   @author     Theodore Mui (theodoremui@gmail.com)
+#               - Created summary_agent.py
+#   @author     Eric Vincent Fernandes
+#               - Implemented tracking for token/cost metrics
+#
+# Date:
+#   Created:    July 4, 2025  (Theodore Mui)
+#   Modified:   September 20, 2025 (Eric Vincent Fernandes)
 #############################################################################
 
 from dotenv import load_dotenv, find_dotenv
@@ -30,7 +37,7 @@ from asdrp.agent.base import AgentReply
 from asdrp.memory.condensed_memory import CondensedMemoryBlock
 
 def get_default_llm(callback_manager=CallbackManager(handlers=[TokenCountingHandler()])) -> LLM:
-    return OpenAI(model="o4-mini", callback_manager=callback_manager)
+    return OpenAI(model="gpt-5-nano-2025-08-07", temperature=0.0, timeout=1200.0, callback_manager=callback_manager)
 
 class SummaryAgent:
     def __init__(
@@ -47,15 +54,14 @@ class SummaryAgent:
         self.memory = self._create_memory()
         self.agent = self._create_agent(self.memory, tools)
         self.tokenizer: tiktoken.Encoding = tiktoken.get_encoding("o200k_base")
-        self.query_input_tokens = 0
-        self.query_output_tokens = 0
-        self.query_time = 0
+        self.query_input_tokens = 0     # Number of tokens passed into the LLM within this agent
+        self.query_output_tokens = 0    # Number of tokens returned by the LLM within this agent
+        self.query_time = 0             # Duration of time the LLM took to respond
 
     async def achat(self, user_msg: str) -> AgentReply:
         try:
-            # Measure tokens used by memory block/agent
-            # self.query_input_tokens = len(self.tokenizer.encode(str(await self.memory_block._aget(None))))
-            self.query_input_tokens = self.memory_block.input_tokens
+            # Measure tokens passed into the LLM within this agent
+            self.query_input_tokens = self.memory_block.input_tokens + len(self.tokenizer.encode(user_msg))
 
             initial_query_time = time.time()
 
@@ -73,6 +79,7 @@ class SummaryAgent:
             else:
                 self.query_output_tokens = len(self.tokenizer.encode(str(response)))
                 return AgentReply(response_str=str(response))
+
         except Exception as e:
             self.query_time = 0
             self.query_input_tokens = 0
@@ -86,17 +93,17 @@ class SummaryAgent:
             memory=memory,
             tools=tools,
         )
-        
+
     def _create_memory(self) -> Memory:
         return Memory.from_defaults(
             session_id="summary_agent",
-            token_limit=50,                       # size of the entire working memory 
+            token_limit=50,                       # size of the entire working memory (default defined by LlamaIndex)
             chat_history_token_ratio=0.7,         # ratio of chat history to total tokens
             token_flush_size=10,                  # number of tokens to flush when memory is full
             insert_method=InsertMethod.SYSTEM,
             memory_blocks=[self.memory_block]
         )
-    
+
 
 #-------------------------------------
 # Main: smoke tests
@@ -142,4 +149,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    
+

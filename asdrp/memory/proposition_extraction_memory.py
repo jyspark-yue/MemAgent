@@ -1,12 +1,18 @@
 #############################################################################
-# proposition_extraction.py
+# File: proposition_extraction.py
 #
-# class for proposition (facts, opinions, preferences, beliefs, experiences,
-# and goals) extraction from conversations
+# Description:
+#   Class for proposition (facts, opinions, preferences, beliefs, experiences, and goals) extraction from conversations
 #
-# @author Theodore Mui
-# @email  theodoremui@gmail.com
-# Fri Jul 04 11:30:53 PDT 2025
+# Authors:
+#   @author     Theodore Mui (theodoremui@gmail.com)
+#               - Created proposition_extraction.py
+#   @author     Eric Vincent Fernandes
+#               - Implemented tracking for token/cost metrics
+#
+# Date:
+#   Created:    July 4, 2025  (Theodore Mui)
+#   Modified:   September 20, 2025 (Eric Vincent Fernandes)
 #############################################################################
 
 import re
@@ -80,7 +86,7 @@ If no new propositions are present, return: <propositions></propositions>""")
 
 
 def get_default_llm(callback_manager=CallbackManager(handlers=[TokenCountingHandler()])) -> LLM:
-    return OpenAI(model="gpt-4o-mini", callback_manager=callback_manager)
+    return OpenAI(model="gpt-5-nano-2025-08-07", temperature=0.0, timeout=1200.0, callback_manager=callback_manager)
 
 class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
     """
@@ -146,6 +152,7 @@ class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
 
     async def _aput(self, messages: List[ChatMessage]) -> None:
         """Extract propositions from new messages and add them to the propositions list."""
+
         # Skip if no messages
         if not messages:
             return
@@ -169,8 +176,6 @@ class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
 
         # Get the propositions extraction
         response = await self.llm.achat(messages=[*messages, *prompt_messages])
-
-        # paused_memory_time = time.time()
 
         # Parse the XML response to extract propositions
         propositions_text = response.message.content or ""
