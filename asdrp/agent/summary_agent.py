@@ -30,15 +30,16 @@ from asdrp.agent.base import AgentReply
 from asdrp.memory.condensed_memory import CondensedMemoryBlock
 
 def get_default_llm(callback_manager=CallbackManager(handlers=[TokenCountingHandler()])) -> LLM:
-    return OpenAI(model="gpt-4o-mini", callback_manager=callback_manager)
+    return OpenAI(model="o4-mini", callback_manager=callback_manager)
 
 class SummaryAgent:
     def __init__(
         self,
-        llm: LLM = get_default_llm(),
-        tools: List[FunctionTool] = [],
+        tools=None,
     ):
-        self.llm = llm
+        if tools is None:
+            tools = []
+        self.llm = get_default_llm()
         self.memory_block = CondensedMemoryBlock(
             name="condensed_memory",
             token_limit=50
@@ -53,7 +54,8 @@ class SummaryAgent:
     async def achat(self, user_msg: str) -> AgentReply:
         try:
             # Measure tokens used by memory block/agent
-            self.query_input_tokens = len(self.tokenizer.encode(str(await self.memory_block._aget(None))))
+            # self.query_input_tokens = len(self.tokenizer.encode(str(await self.memory_block._aget(None))))
+            self.query_input_tokens = self.memory_block.input_tokens
 
             initial_query_time = time.time()
 

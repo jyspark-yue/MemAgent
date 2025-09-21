@@ -16,6 +16,7 @@ import asyncio
 from typing import List
 import time
 import tiktoken
+import re
 
 from llama_index.core.agent.workflow import FunctionAgent, AgentOutput
 from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
@@ -31,16 +32,41 @@ from asdrp.agent.base import AgentReply
 from asdrp.memory.proposition_extraction_memory import PropositionExtractionMemoryBlock
 
 def get_default_llm(callback_manager=CallbackManager(handlers=[TokenCountingHandler()])) -> LLM:
-    return OpenAI(model="gpt-4o-mini", callback_manager=callback_manager)
+    return OpenAI(model="o4-mini", callback_manager=callback_manager)
+
+
+def parse_props_from_xml(xml_text: str) -> List[str]:
+    # simple regex parse (same as your memory block)
+    pattern = r"<proposition>(.*?)</proposition>"
+    matches = re.findall(pattern, xml_text, re.DOTALL)
+    return [m.strip() for m in matches if m.strip()]
+
+
+def select_relevant_propositions(user_msg: str, propositions: List[str], top_k=5):
+    # naive keyword overlap scoring
+    user_tokens = set(w for w in re.findall(r"\w+", user_msg.lower()))
+    scored = []
+    for p in propositions:
+        p_tokens = set(re.findall(r"\w+", p.lower()))
+        score = len(user_tokens.intersection(p_tokens))
+        scored.append((score, p))
+    scored.sort(reverse=True, key=lambda x: x[0])
+    # if scores are zero, fall back to last-N
+    top = [p for s, p in scored if s > 0][:top_k]
+    if not top:
+        top = propositions[-top_k:]
+    return top
+
 
 class ReductiveAgent:
     def __init__(
         self,
-        llm: LLM = get_default_llm(),
         memory: Memory = None,
-        tools: List[FunctionTool] = [],
+        tools=None,
     ):
-        self.llm = llm
+        if tools is None:
+            tools = []
+        self.llm = get_default_llm()
         self.memory_block = PropositionExtractionMemoryBlock(
             name="proposition_extraction_memory",
             max_propositions=50,
@@ -54,11 +80,8 @@ class ReductiveAgent:
 
     async def achat(self, user_msg: str) -> AgentReply:
         try:
-            # Measure tokens used by memory block/agent
-            # initial_query_input_tokens = getattr(self.llm.callback_manager.handlers, "prompt_llm_token_count", 0)
-            # initial_query_output_tokens = getattr(self.llm.callback_manager.handlers, "completion_llm_token_count", 0)
-
-            self.query_input_tokens = len(self.tokenizer.encode(str(await self.memory_block._aget(None))))
+            # Measure tokens passed into agent by memory
+            self.query_input_tokens = self.memory_block.input_tokens
             initial_query_time = time.time()
 
             # Prepend known propositions to the user message if available, with explicit instruction
@@ -66,20 +89,23 @@ class ReductiveAgent:
             if self.memory and hasattr(self.memory, "memory_blocks"):
                 for block in self.memory.memory_blocks:
                     if isinstance(block, PropositionExtractionMemoryBlock):
-                        props = await block._aget()
-                        if props:
+                        props_xml = await block._aget()
+                        props_list = parse_props_from_xml(props_xml)
+                        relevant_props = select_relevant_propositions(user_msg, props_list, top_k=5)
+
+                        if relevant_props:
+                            props = "\n".join(relevant_props)
                             propositions = (
                                 "Known propositions from conversation so far:\n"
                                 f"{props}\n"
                                 "When answering, reference the known propositions above if relevant.\n"
                             )
+
             full_msg = propositions + user_msg
             response = await self.agent.run(user_msg=full_msg, memory=self.memory)
 
             # Compute query tokens and cost for this question
             self.query_time = time.time() - initial_query_time
-            # self.query_input_tokens = getattr(self.llm.callback_manager.handlers, "prompt_llm_token_count", 0) - initial_query_input_tokens
-            # self.query_output_tokens = getattr(self.llm.callback_manager.handlers, "completion_llm_token_count", 0) - initial_query_output_tokens
 
             if isinstance(response, AgentOutput):
                 self.query_output_tokens = len(self.tokenizer.encode(response.response.content))

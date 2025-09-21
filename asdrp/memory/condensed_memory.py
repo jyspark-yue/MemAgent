@@ -20,7 +20,7 @@ from llama_index.core.memory import BaseMemoryBlock
 from pydantic import Field
 
 # the latest supported encoding model by tiktoken is gpt-4o as of 7/2/2025 #CHANGED TO gpt-4o-mini FOR CONSISTENCY
-ENCODING_MODEL = "gpt-4o-mini"
+# ENCODING_MODEL = "o4-mini"
 DEFAULT_TOKEN_LIMIT = 50000
 
 class CondensedMemoryBlock(BaseMemoryBlock[str]):
