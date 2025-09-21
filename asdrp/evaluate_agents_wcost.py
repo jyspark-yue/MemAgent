@@ -17,7 +17,7 @@
 # Date:
 #   Created:    August 3, 2025  (Varenya Garg)
 #   Modified:   August 22, 2025 (Oliver Hsu)
-#   Modified:   September 19, 2025 (Eric Vincent Fernandes)
+#   Modified:   September 20, 2025 (Eric Vincent Fernandes)
 #############################################################################
 
 import asyncio
@@ -32,8 +32,8 @@ from llama_index.core.base.llms.types import ChatMessage
 # IMPORTANT: IMPORT THE CUSTOM AGENT TO EVALUATE
 from asdrp.agent.summary_agent import SummaryAgent
 from asdrp.agent.reductive_agent import ReductiveAgent
-# from asdrp.agent.episodic_agent import EpisodicAgent
-# from asdrp.agent.hierarchical_vector_agent import HVMAgent
+from asdrp.agent.episodic_agent import EpisodicAgent
+from asdrp.agent.hierarchical_vector_agent import HVMAgent
 
 # Import the OpenAI RateLimitError to detect rate-limit exceptions
 try:
@@ -45,8 +45,8 @@ except ImportError:
         pass
 
 # Constants to compute approximate cost for API usage (o4-mini)
-INPUT_COST_PER_1K = 0.00015  # Cost per 1000 input tokens ($)    [$0.15 * (1000/1000000)]
-OUTPUT_COST_PER_1K = 0.00060  # Cost per 1000 output tokens ($)   [$0.60 * (1000/1000000)]
+INPUT_COST_PER_1K = 0.0011  # Cost per 1000 input tokens ($)    [$1.10 * (1000/1000000)]
+OUTPUT_COST_PER_1K = 0.0044  # Cost per 1000 output tokens ($)   [$4.40 * (1000/1000000)]
 
 # Retry configuration for rate-limit handling
 RETRY_ATTEMPTS = 5      # Maximum number of retry attempts on RateLimitError
@@ -86,14 +86,19 @@ async def load_chat_history(agent_object, haystack_sessions):
 
     print(f"Processing {len(haystack_sessions)} haystack sessions...")
 
+    memory_block = agent_object.memory_block
+    can_batch = isinstance(agent_object, ReductiveAgent)
+
     session_count = 0
     for session in haystack_sessions:
         session_count += 1
         if session_count % 5 == 0:  # Print progress every 5 sessions
             print(f"Processed {session_count}/{len(haystack_sessions)} sessions...")
 
-        user_msg = None
-        agent_text = None
+        msg = None
+        pending_user = None
+        buffer: List[ChatMessage] = []
+        batch_pairs = len(session)
 
         for turn in session:
 
@@ -102,23 +107,47 @@ async def load_chat_history(agent_object, haystack_sessions):
 
             # Separate user and assistant messages
             if turn["role"] == "user":
-                user_msg = ChatMessage(role="user", content=content)
+                msg = ChatMessage(role="user", content=content)
             elif turn["role"] == "assistant":
-                agent_text = ChatMessage(role="assistant", content=content)
+                msg = ChatMessage(role="assistant", content=content)
 
-                # Only push user-assistant pairs
-                if user_msg is not None and agent_text is not None:
+            if can_batch:
+                # batch user+assistant messages into buffer and flush when full
+                buffer.append(msg)
+
+                # Every pair is 2 messages; flush when we reach batch_pairs pairs
+                if len(buffer) >= 2 * batch_pairs:
                     try:
-                        await agent_object.memory_block._aput(
-                            [user_msg, agent_text]) # IMPORTANT: memory_block variable name is constant across agents
+                        await memory_block._aput(buffer)
                     except Exception as e:
-                        print(f"Error processing turn: {e}")
+                        print(f"Error processing buffered turns: {e}")
                         traceback.print_exc()
+                    buffer = []
+
+            else:
+                if msg.role == "user":
+                    pending_user = msg
+                else:
+                    if pending_user is None:
                         continue
+                    # assistant message - if we have a pending user, send pair
+                    try:
+                        await memory_block._aput([pending_user, msg])   # IMPORTANT: memory_block variable name is constant across agents
+                    except Exception as e:
+                        print(f"Error processing turn pair: {e}")
+                        traceback.print_exc()
 
                     # Reset temporary variables for next pair
-                    user_msg = None
-                    agent_text = None
+                    pending_user = None
+                    msg = None
+
+        # end of session: flush any leftover buffered pairs for batched memory blocks
+        if can_batch and buffer:
+            try:
+                await memory_block._aput(buffer)
+            except Exception as e:
+                print(f"Error processing last buffered turns for session: {e}")
+                traceback.print_exc()
 
 
 def reset_memory(agent_object):
