@@ -25,14 +25,13 @@ import json
 import os
 import time
 import traceback
+from typing import List
 
 from llama_index.core.base.llms.types import ChatMessage
-from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
-from llama_index.llms.openai import OpenAI
 
 # IMPORTANT: IMPORT THE CUSTOM AGENT TO EVALUATE
 from asdrp.agent.summary_agent import SummaryAgent
-# from asdrp.agent.reductive_agent import ReductiveAgent
+from asdrp.agent.reductive_agent import ReductiveAgent
 # from asdrp.agent.episodic_agent import EpisodicAgent
 # from asdrp.agent.hierarchical_vector_agent import HVMAgent
 
@@ -139,10 +138,8 @@ class LongMemEvalRunner:
     Handles token tracking, cost calculation, rate-limit retry, and parallelism.
     """
 
-    def __init__(self, agent, callback_manager, handler):
+    def __init__(self, agent):
         self.agent = agent
-        self.callback_manager = callback_manager
-        self.handler = handler
         self.semaphore = asyncio.Semaphore(10)   # Sets limit to 3 questions processed at a time
 
     async def process_question(self, question, question_num):
@@ -164,7 +161,7 @@ class LongMemEvalRunner:
         print(f"Number of haystack sessions: {len(question.get('haystack_sessions', []))}")
 
         # Reset agent memory for this question
-        agent_object = create_agent(self.agent, self.callback_manager)
+        agent_object = create_agent(self.agent)
         print("Memory reset, processing chat history...")
 
         lch_time = lch_input_tokens = lch_output_tokens = lch_cost = 0
@@ -388,20 +385,18 @@ class LongMemEvalRunner:
         print(f"Total evaluation time:                  {overall_time:.4f}s")
 
 
-def create_agent(agent_class, callback_manager=None):
+def create_agent(agent_class):
     """
     Create an instance of the agent with LLM and token tracker attached.
 
     Args:
         agent_class: The class of the agent to instantiate
-        callback_manager: Callback manager for token tracking
 
     Returns:
         agent_instance: Initialized agent
     """
 
-    llm = OpenAI(model="gpt-4o-mini", callback_manager=CallbackManager(handlers=[TokenCountingHandler()]))
-    agent_instance = agent_class(llm=llm)
+    agent_instance = agent_class()
     return agent_instance
 
 
@@ -414,13 +409,18 @@ def main():
     start_index = 0
     num_questions = 500
 
-    handler = TokenCountingHandler()
-    cb_manager = CallbackManager(handlers=[handler])
+    runner = LongMemEvalRunner(SummaryAgent)   # IMPORTANT: CHANGE BASED ON AGENT
 
-    runner = LongMemEvalRunner(SummaryAgent, cb_manager, handler)   # IMPORTANT: CHANGE BASED ON AGENT
+    # Get the directory where this script lives
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-    # Paths for dataset and results
-    data_file = "eval/data/custom_history/longmemeval_m.json"
+    # Build the full path to your JSON file
+    data_file = os.path.join(BASE_DIR, "eval", "data", "custom_history", "longmemeval_m.json")
+
+    # Example: check it exists before loading
+    if not os.path.exists(data_file):
+        raise FileNotFoundError(f"Cannot find dataset file: {data_file}")
+
     output_file = "results/summary_agent_responses.json"            # IMPORTANT: CHANGE BASED ON AGENT
 
     # Ensure output directory exists
