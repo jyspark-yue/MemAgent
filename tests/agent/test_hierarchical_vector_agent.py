@@ -7,7 +7,7 @@ Run from repo root:
     python -m tests.agent.hvm_tree_demo
 """
 
-from asdrp.agent.hierarchical_vector_agent import HVMAgent
+from asdrp.agent.hvm_agent import HVMAgent
 
 def main() -> None:
     agent = HVMAgent()
@@ -23,7 +23,7 @@ def main() -> None:
     ]
 
     for t in turns:
-        agent.mem.store(t)
+        agent.memory_block._aput(t)
 
     # Printing the memory tree / roots if no tree
     print("\n=== MEMORY TREE ===")
@@ -31,7 +31,7 @@ def main() -> None:
 
     # Printing the output for retrieval
     query = "What programming language does Judy like?"
-    answer = agent.mem.retrieve(query)
+    answer = agent.memory_block._aget(query)
     print("\n=== RETRIEVAL FOR: \"" + query + "\" ===")
     for i, snippet in enumerate(answer, 1):
         print(f"{i}. {snippet}")

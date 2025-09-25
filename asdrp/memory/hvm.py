@@ -1,5 +1,5 @@
 #############################################################################
-# hierarchical_vector_memory.py
+# hvm.py
 #
 # class for implementing hierarchical vector memory using TreeIndex
 # and Qdrant database
@@ -26,7 +26,7 @@ from llama_index.vector_stores.qdrant import QdrantVectorStore
 
 class HierarchicalVectorMemory:
     """Long‑term memory that stores every turn as a leaf node.
-    TreeIndex utomatically builds a hierarchy above the leaves.
+    TreeIndex automatically builds a hierarchy above the leaves.
     Retrieval walks the hierarchy or uses the collapsed vector view, depending on `mode`."""
 
     def __init__(
@@ -58,7 +58,7 @@ class HierarchicalVectorMemory:
         self._mode = mode
 
 
-    def store(self, text: str, meta: Dict[str, Any] | None = None) -> None:
+    def _aput(self, text: str, meta: Dict[str, Any] | None = None) -> None:
         """Insert the new turn as a leaf node."""
 
         meta = meta or {}
@@ -71,7 +71,7 @@ class HierarchicalVectorMemory:
         self._index.insert(doc)
 
 
-    def retrieve(self, query: str) -> List[str]:
+    def _aget(self, query: str) -> List[str]:
         """Similarity search that follows the hierarchical structure."""
 
         qe = self._index.as_query_engine(
@@ -114,7 +114,7 @@ class HierarchicalVectorMemory:
             spacer = "  " * indent  # alignment
             snippet = re.sub(r"\s+", " ", doc.text).strip()[:max_chars]
             print(f"{spacer}┣━━ {snippet}")
-            
+
             # children  kept in node.relationships[NodeRelationship.CHILD]
             rels = getattr(node, "relationships", {})
             from llama_index.core import NodeRelationship  # local import avoids top‑level dep
