@@ -21,29 +21,33 @@ load_dotenv(find_dotenv())
 import asyncio
 import time
 from typing import List
-import tiktoken
 
 from llama_index.core.agent.workflow import FunctionAgent, AgentOutput
 from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
+from llama_index.core.utils import count_tokens
 from llama_index.core.base.llms.types import ChatMessage
 from llama_index.core.tools import FunctionTool
 from llama_index.core.llms import LLM
 from llama_index.core.memory import (
     Memory, InsertMethod
 )
-from llama_index.llms.openai import OpenAI
+from llama_index.llms.google_genai import GoogleGenAI
 
 from asdrp.agent.base import AgentReply
 from asdrp.memory.condensed_memory import CondensedMemoryBlock
 
+
 def get_default_llm(callback_manager=CallbackManager(handlers=[TokenCountingHandler()])) -> LLM:
-    return OpenAI(model="gpt-5-nano-2025-08-07", temperature=0.0, timeout=1200.0, callback_manager=callback_manager)
+    return GoogleGenAI(
+        model="gemini-2.5-flash-lite",
+        temperature=0.3,  # small randomness, still mostly deterministic,
+        max_retries=100,
+        callback_manager=callback_manager,
+    )
+
 
 class SummaryAgent:
-    def __init__(
-        self,
-        tools=None,
-    ):
+    def __init__(self, tools=None):
         if tools is None:
             tools = []
         self.llm = get_default_llm()
@@ -53,32 +57,36 @@ class SummaryAgent:
         )
         self.memory = self._create_memory()
         self.agent = self._create_agent(self.memory, tools)
-        self.tokenizer: tiktoken.Encoding = tiktoken.get_encoding("o200k_base")
         self.query_input_tokens = 0     # Number of tokens passed into the LLM within this agent
         self.query_output_tokens = 0    # Number of tokens returned by the LLM within this agent
         self.query_time = 0             # Duration of time the LLM took to respond
 
     async def achat(self, user_msg: str) -> AgentReply:
         try:
+            # Count tokens for the new message only
+            user_msg_tokens = count_tokens(user_msg)
+
             # Measure tokens passed into the LLM within this agent
-            self.query_input_tokens = self.memory_block.input_tokens + len(self.tokenizer.encode(user_msg))
+            self.query_input_tokens = self.memory_block.input_tokens + user_msg_tokens
 
             initial_query_time = time.time()
 
             response = await self.agent.run(user_msg=user_msg, memory=self.memory)
 
-            # Compute query tokens and cost for this question
+            # time taken
             self.query_time = time.time() - initial_query_time
 
+            # measure tokens coming OUT
             if isinstance(response, AgentOutput):
-                self.query_output_tokens = len(self.tokenizer.encode(response.response.content))
-                return AgentReply(response_str=response.response.content)
+                output_text = response.response.content
             elif isinstance(response, ChatMessage):
-                self.query_output_tokens = len(self.tokenizer.encode(response.content))
-                return AgentReply(response_str=response.content)
+                output_text = response.content
             else:
-                self.query_output_tokens = len(self.tokenizer.encode(str(response)))
-                return AgentReply(response_str=str(response))
+                output_text = str(response)
+
+            self.query_output_tokens = count_tokens(output_text)
+
+            return AgentReply(response_str=output_text)
 
         except Exception as e:
             self.query_time = 0

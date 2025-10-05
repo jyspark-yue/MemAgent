@@ -20,16 +20,17 @@ import pprint
 import time
 from typing import Any, List, Optional
 
-import tiktoken
+# import tiktoken  # ❌ no need for manual tokenizer now
 from llama_index.core.llms import ChatMessage, TextBlock
 from llama_index.core.memory import BaseMemoryBlock
+from llama_index.core.utils import count_tokens  # use built-in token counter
 from pydantic import Field
 
 DEFAULT_TOKEN_LIMIT = 50000
 
 class CondensedMemoryBlock(BaseMemoryBlock[str]):
     """
-    This class is a smart conversation buffer that maintains context while 
+    This class is a smart conversation buffer that maintains context while
     staying within reasonable memory limits.
 
     It condenses the conversation history into a single string, while 
@@ -39,11 +40,10 @@ class CondensedMemoryBlock(BaseMemoryBlock[str]):
     """
     current_memory: List[str] = Field(default_factory=list)
     token_limit: int = Field(default=DEFAULT_TOKEN_LIMIT)
-    tokenizer: tiktoken.Encoding = tiktoken.get_encoding("o200k_base")
+    # tokenizer: tiktoken.Encoding = tiktoken.get_encoding("o200k_base")  # ❌ remove
     input_tokens: int = Field(default=0, description="The number of tokens passed into the LLM when loading the chat history.")
     output_tokens: int = Field(default=0, description="The number of tokens returned by the LLM when loading the chat history. (Unneeded Here)")
     load_chat_history_time: float = Field(default=0.0, description="The duration of time it took to load the chat history.")
-
 
     async def _aget(
         self, messages: Optional[List[ChatMessage]] = None, **block_kwargs: Any
@@ -80,26 +80,20 @@ class CondensedMemoryBlock(BaseMemoryBlock[str]):
                         for tool_call in val
                     ]
                     kwargs[key] = val
-                elif key != "session_id" and key != "tool_call_id":
+                elif key not in ("session_id", "tool_call_id"):
                     kwargs[key] = val
             memory_str += f"\n({kwargs})" if kwargs else ""
 
             self.current_memory.append(memory_str)
 
             # Count tokens for this new message (input tokens)
-            self.input_tokens += len(self.tokenizer.encode(memory_str))
+            self.input_tokens += count_tokens(memory_str)
 
         # ensure this memory block doesn't get too large
-        message_length = sum(
-            len(self.tokenizer.encode(message))
-            for message in self.current_memory
-        )
+        message_length = sum(count_tokens(message) for message in self.current_memory)
         while message_length > self.token_limit:
             self.current_memory = self.current_memory[1:]
-            message_length = sum(
-                len(self.tokenizer.encode(message))
-                for message in self.current_memory
-            )
+            message_length = sum(count_tokens(message) for message in self.current_memory)
 
         self.load_chat_history_time = time.time() - start_time
 

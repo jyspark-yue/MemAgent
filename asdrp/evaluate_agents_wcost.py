@@ -32,8 +32,10 @@
 import asyncio
 import json
 import os
+import random
 import time
 import traceback
+from types import new_class
 from typing import List
 
 from llama_index.core.base.llms.types import ChatMessage
@@ -42,23 +44,27 @@ from asdrp.agent.summary_agent import SummaryAgent
 from asdrp.agent.reductive_agent import ReductiveAgent
 # from asdrp.agent.episodic_agent import EpisodicAgent
 # from asdrp.agent.hierarchical_vector_agent import HVMAgent
+from google.genai.errors import ClientError
+from llama_index.core.memory import FactExtractionMemoryBlock
 
-# Import the OpenAI RateLimitError to detect rate-limit exceptions
+# Import Gemini RateLimitError to detect rate-limit exceptions
 try:
-    from openai.error import RateLimitError
+    from google.generativeai.errors import RateLimitError
 except ImportError:
-    # Fallback definition in case openai package is not available
+    # Fallback definition in case google.generativeai package is not available
     class RateLimitError(Exception):
-        """Fallback RateLimitError used when openai.error isn't importable at analysis time."""
+        """Fallback RateLimitError used when generativeai.error isn't importable at analysis time."""
         pass
 
-# Constants to compute approximate cost for API usage (gpt-5-nano)
-INPUT_COST_PER_1K = 0.00005  # Cost per 1000 input tokens ($)    [$0.05 * (1000/1000000)]
+# Constants to compute approximate cost for API usage (gemini-2.5-flash-lite)
+INPUT_COST_PER_1K = 0.00010  # Cost per 1000 input tokens ($)    [$0.10 * (1000/1000000)]
 OUTPUT_COST_PER_1K = 0.00040  # Cost per 1000 output tokens ($)   [$0.40 * (1000/1000000)]
 
 # Retry configuration for rate-limit handling
-RETRY_ATTEMPTS = 5      # Maximum number of retry attempts on RateLimitError
-RETRY_BASE_DELAY = 10  # Base seconds for exponential backoff between retries
+RETRY_ATTEMPTS = 20      # Maximum number of retry attempts on errors
+RETRY_BASE_DELAY = 1.5   # Base seconds for exponential backoff between retries
+RETRY_MAX_DELAY = 30     # Max seconds for exponential backoff between retries
+# RETRY_BASE_DELAY = 10  # Base seconds for exponential backoff between retries
 
 
 async def write_results_to_file(output_file, results, append=False):
@@ -143,11 +149,7 @@ async def load_chat_history(agent_object, haystack_sessions):
 
                 # Every pair is 2 messages; flush when we reach batch_pairs pairs
                 if len(buffer) >= 2 * batch_pairs:
-                    try:
-                        await memory_block._aput(buffer)    # IMPORTANT: memory_block variable name is constant across agents
-                    except Exception as e:
-                        print(f"Error processing buffered turns: {e}")
-                        traceback.print_exc()
+                    await _retry_aput(memory_block, buffer)
                     buffer = []
 
             else:   # Ensures only user-assistant pairs are sent
@@ -156,11 +158,7 @@ async def load_chat_history(agent_object, haystack_sessions):
                 else:
                     if pending_user is None:
                         continue
-                    try:
-                        await memory_block._aput([pending_user, msg])   # IMPORTANT: memory_block variable name is constant across agents
-                    except Exception as e:
-                        print(f"Error processing turn pair: {e}")
-                        traceback.print_exc()
+                    await _retry_aput(memory_block, [pending_user, msg])
 
                     # Reset temporary variables for next user-assistant pair
                     pending_user = None
@@ -168,12 +166,66 @@ async def load_chat_history(agent_object, haystack_sessions):
 
         # End of session: flush any leftover buffered pairs for batched memory blocks
         if can_batch and buffer:
-            try:
-                await memory_block._aput(buffer)   # IMPORTANT: memory_block variable name is constant across agents
-            except Exception as e:
-                print(f"Error processing last buffered turns for session: {e}")
-                traceback.print_exc()
+            await _retry_aput(memory_block, buffer)
 
+async def _retry_aput(memory_block, buffer):
+    last_exc = None
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            await memory_block._aput(buffer)
+            last_exc = None
+            break
+        except ClientError as e:   # <-- explicitly catch Gemini API errors
+            print(f"ClientError caught (attempt {attempt}): {e}")
+            last_exc = e
+            # Use retry logic for RESOURCE_EXHAUSTED
+            if getattr(e, "status", None) == "RESOURCE_EXHAUSTED":
+                # delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
+                delay = delay * random.uniform(0.8, 1.2)    # add ±20% jitter
+                print(f"RESOURCE_EXHAUSTED detected, backing off {delay}s...")
+                await asyncio.sleep(delay)
+                continue
+            raise
+
+        except RuntimeError as e:
+            # specifically catch Gemini’s “Response was terminated early: MAX_TOKENS”
+            print(f"Gemini hit content issue (attempt {attempt}): {e}")
+            last_exc = e
+            if "MAX_TOKENS" in str(e) or "PROHIBITED_CONTENT" in str(e):
+                # delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY-15)
+                delay = delay * random.uniform(0.8, 1.2)    # add ±20% jitter
+                print(f"Backing off {delay}s before retry...")
+                await asyncio.sleep(delay)
+                continue
+            raise  # different RuntimeError
+
+        except ValueError as e:
+            print(f"No candidates detected (attempt {attempt}): {e}")
+            last_exc = e
+            if "no candidates" in str(e):
+                delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY - 15)
+                delay = delay * random.uniform(0.8, 1.2)  # add ±20% jitter
+                print(f"Backing off {delay}s before retry...")
+                await asyncio.sleep(delay)
+                continue
+            raise  # different RuntimeError
+
+        except Exception as e:      # fallback for OpenAI or other errors
+            print(f"Error processing buffered turns (attempt {attempt}): {e}")
+            traceback.print_exc()
+            last_exc = e
+            if "Rate limit" in str(e) or "429" in str(e):
+                # delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
+                delay = delay * random.uniform(0.8, 1.2)    # add ±20% jitter
+                print(f"RateLimit detected, backing off {delay}s before retry...")
+                await asyncio.sleep(delay)
+                continue
+            raise
+    if last_exc is not None:
+        raise last_exc
 
 def reset_memory(agent_object):
     """
@@ -201,7 +253,7 @@ class LongMemEvalRunner:
         # ==============================================================================================================
         # !!! IMPORTANT: CHANGE LIMIT AS NEEDED !!!
         # ==============================================================================================================
-        self.semaphore = asyncio.Semaphore(50)   # Limits number of questions processed at a time
+        self.semaphore = asyncio.Semaphore(20)   # Limits number of questions processed at a time
 
     async def process_question(self, question, question_num):
         """
@@ -248,14 +300,14 @@ class LongMemEvalRunner:
                     print(f"Got response: {answer_text[:100]}...")  # Show first 100 chars
                     last_exc = None
                     break
+                except RateLimitError as e:
+                    last_exc = e
+                    delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                    print(f"RateLimitError attempt {attempt}/{RETRY_ATTEMPTS}: {e}. Backing off {delay}s...")
+                    await asyncio.sleep(delay)
+                    continue
                 except Exception as e:
                     print(f"[DEBUG] Exception type={type(e)} message={e}")
-                    if "Rate limit" in str(e) or "429" in str(e):
-                        last_exc = e
-                        delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
-                        print(f"RateLimitError attempt {attempt}/{RETRY_ATTEMPTS}: {e}. Backing off {delay}s...")
-                        await asyncio.sleep(delay)
-                        continue
                     raise
 
             if last_exc is not None and answer_text is None:    # Still failing rate-limit after retries
@@ -432,7 +484,7 @@ class LongMemEvalRunner:
         # ==============================================================================================================
         # !!! IMPORTANT: SET BATCH SIZE SAME AS SEMAPHORE LIMIT !!!
         # ==============================================================================================================
-        batch_size = 50
+        batch_size = 20
 
         print(f"Running {batch_size} questions in parallel...")
 
