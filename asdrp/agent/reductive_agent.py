@@ -14,6 +14,7 @@
 #   Created:    July 4, 2025  (Theodore Mui)
 #   Modified:   September 20, 2025 (Eric Vincent Fernandes)
 #############################################################################
+import json
 
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
@@ -24,26 +25,25 @@ import time
 import re
 
 from llama_index.core.agent.workflow import FunctionAgent, AgentOutput
-from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
 from llama_index.core.base.llms.types import ChatMessage
+from llama_index.core.utils import count_tokens
 from llama_index.core.tools import FunctionTool
 from llama_index.core.llms import LLM
 from llama_index.core.memory import (
     Memory, InsertMethod
 )
-from llama_index.core.utils import count_tokens  # import token counter
-from llama_index.llms.google_genai import GoogleGenAI  # use Gemini
+from llama_index.llms.ollama import Ollama
+
 
 from asdrp.agent.base import AgentReply
 from asdrp.memory.proposition_extraction_memory import PropositionExtractionMemoryBlock
 
-def get_default_llm(callback_manager=CallbackManager(handlers=[TokenCountingHandler()])) -> LLM:
-    return GoogleGenAI(
-        model="gemini-2.5-flash-lite",
-        # temperature=0.0,
-        max_retries=100,
-        max_tokens=64000,
-        callback_manager=callback_manager,
+def get_default_llm() -> LLM:
+    return Ollama(
+        model="qwen3:8b",
+        request_timeout=180.0,
+        thinking=True,
+        json_mode=True,
     )
 
 class ReductiveAgent:
@@ -82,25 +82,96 @@ class ReductiveAgent:
 
             full_msg = propositions + user_msg
 
-            # Track input tokens using count_tokens
-            self.query_input_tokens = count_tokens(full_msg)
+            # If the Ollama response contains timing/token metadata, prefer it.
+            start_time_wall = time.time()
+            response_raw = await self.agent.run(user_msg=full_msg, memory=self.memory)
+            end_time_wall = time.time()
 
-            initial_query_time = time.time()
-            response = await self.agent.run(user_msg=full_msg, memory=self.memory)
-
-            # Compute elapsed time for this question
-            self.query_time = time.time() - initial_query_time
-
-            # Track output tokens using count_tokens
-            if isinstance(response, AgentOutput):
-                self.query_output_tokens = count_tokens(response.response.content)
-                return AgentReply(response_str=response.response.content)
-            elif isinstance(response, ChatMessage):
-                self.query_output_tokens = count_tokens(response.content)
-                return AgentReply(response_str=response.content)
+            # Normalize / extract content from different possible return types.
+            # response_raw might be AgentOutput, ChatMessage, or something with `.message.content`
+            content_obj = None
+            if isinstance(response_raw, AgentOutput):
+                # AgentOutput.response.content or .response may contain JSON string or plain text
+                content_obj = getattr(response_raw.response, "content", response_raw.response)
+            elif hasattr(response_raw, "message") and getattr(response_raw, "message", None) is not None:
+                content_obj = getattr(response_raw.message, "content", response_raw.message)
+            elif isinstance(response_raw, ChatMessage):
+                content_obj = response_raw.content
             else:
-                self.query_output_tokens = count_tokens(str(response))
-                return AgentReply(response_str=str(response))
+                # Could already be a dict or string
+                content_obj = response_raw
+
+            # At this point content_obj might be:
+            # - a JSON string (from ollama) OR
+            # - a Python dict (already parsed) OR
+            # - a plain string response
+            parsed = None
+            response_text = None
+
+            if isinstance(content_obj, dict):
+                parsed = content_obj
+                # Maybe Ollama's structured response uses "response" key or "message"
+                response_text = parsed.get("response") or parsed.get("message") or ""
+            else:
+                # Try to parse JSON string safely
+                if isinstance(content_obj, str):
+                    stripped = content_obj.strip()
+                    try:
+                        parsed = json.loads(stripped)
+                        if isinstance(parsed, dict):
+                            response_text = parsed.get("response") or parsed.get("message") or ""
+                        else:
+                            # parsed is not a dict (e.g. a list), fall back
+                            response_text = str(parsed)
+                    except Exception:
+                        # not JSON; treat as plain text
+                        response_text = content_obj
+                else:
+                    # last fallback
+                    response_text = str(content_obj)
+
+            # Token counts & timing:
+            # Ollama returns counts like: prompt_eval_count, eval_count, total_duration (ns)
+            if isinstance(parsed, dict) and ("prompt_eval_count" in parsed or "eval_count" in parsed or "total_duration" in parsed):
+                # use Ollama-provided metrics when available
+                self.query_input_tokens = int(parsed.get("prompt_eval_count", count_tokens(full_msg)))
+                self.query_output_tokens = int(parsed.get("eval_count", count_tokens(response_text)))
+                if "total_duration" in parsed:
+                    # total_duration is nanoseconds in Ollama responses
+                    try:
+                        self.query_time = float(parsed["total_duration"]) / 1_000_000_000.0
+                    except Exception:
+                        # if it's not a number, fall back to wall-clock
+                        self.query_time = end_time_wall - start_time_wall
+                else:
+                    self.query_time = end_time_wall - start_time_wall
+            else:
+                # Fallback: compute with token counter + wall-clock measurement
+                try:
+                    self.query_input_tokens = int(count_tokens(full_msg))
+                except Exception:
+                    self.query_input_tokens = 0
+                try:
+                    self.query_output_tokens = int(count_tokens(response_text or ""))
+                except Exception:
+                    self.query_output_tokens = 0
+                self.query_time = end_time_wall - start_time_wall
+
+            # Final response string to return to caller:
+            final_text = response_text if response_text is not None else ""
+            # If parsed is dict and has nested structure, try to be helpful and convert to string
+            if isinstance(parsed, dict) and not final_text:
+                # try a few common keys
+                final_text = parsed.get("response") or parsed.get("message") or json.dumps(parsed)
+
+            return AgentReply(response_str=final_text)
+
+        except Exception as e:
+            self.query_time = 0
+            self.query_input_tokens = 0
+            self.query_output_tokens = 0
+            print(f"Error in ReductiveAgent: {e}")
+            return AgentReply(response_str="I'm sorry, I'm having trouble processing your request. Please try again.")
 
         except Exception as e:
             self.query_time = 0

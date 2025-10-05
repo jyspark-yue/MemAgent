@@ -14,21 +14,29 @@
 #   Created:    July 4, 2025  (Theodore Mui)
 #   Modified:   September 20, 2025 (Eric Vincent Fernandes)
 #############################################################################
-
+import json
 import re
 import time
 from typing import Any, List, Optional, Union
 
 from llama_index.core.base.llms.types import ChatMessage
 from llama_index.core.bridge.pydantic import Field, field_validator
-from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
 from llama_index.core.llms import LLM
 from llama_index.core.memory.memory import BaseMemoryBlock
-from llama_index.core.prompts import (BasePromptTemplate, PromptTemplate,
-                                      RichPromptTemplate)
-from llama_index.llms.openai import OpenAI
-from llama_index.core.utils import count_tokens  # use this for token counting
-from llama_index.llms.google_genai import GoogleGenAI  # Gemini-compatible LLM
+from llama_index.core.prompts import (BasePromptTemplate, PromptTemplate, RichPromptTemplate)
+from llama_index.llms.ollama import Ollama
+from llama_index.core.utils import count_tokens
+
+try:
+    from transformers import AutoTokenizer
+    _hf_tokenizer = AutoTokenizer.from_pretrained("gpt2", use_fast=True)
+except Exception:
+    _hf_tokenizer = None
+
+try:
+    from llama_index.core.utils import count_tokens as _llama_count_tokens
+except Exception:
+    _llama_count_tokens = None
 
 DEFAULT_EXTRACT_PROMPT = RichPromptTemplate("""You are a comprehensive information extraction system designed to identify key propositions from conversations.
 
@@ -87,13 +95,12 @@ Return ONLY the condensed propositions in this exact format:
 If no new propositions are present, return: <propositions></propositions>""")
 
 
-def get_default_llm(callback_manager=CallbackManager(handlers=[TokenCountingHandler()])) -> LLM:
-    return GoogleGenAI(
-        model="gemini-2.5-flash-lite",
-        # temperature=0.0,
-        max_retries=100,
-        max_tokens=64000,
-        callback_manager=callback_manager,
+def get_default_llm() -> LLM:
+    return Ollama(
+        model="qwen3:8b",
+        request_timeout=180.0,
+        thinking=True,
+        json_mode=True,
     )
 
 class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
@@ -166,7 +173,7 @@ class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
             return
 
         # Track before call
-        start_time = time.time()
+        start_time_ns = time.time_ns()
 
         # Format existing propositions for the prompt
         existing_propositions_text = ""
@@ -175,23 +182,136 @@ class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
                 [f"<proposition>{proposition}</proposition>" for proposition in self.propositions]
             )
 
-        # Create the prompt
+        # Build prompt messages
         prompt_messages = self.proposition_extraction_prompt_template.format_messages(
             existing_propositions=existing_propositions_text,
         )
 
-        # Get the propositions extraction
-        response = await self.llm.achat(messages=[*messages, *prompt_messages])
-
-        # Count input tokens using count_tokens
+        # Combine message text for fallback token counting
         total_input_text = "".join([m.content for m in messages]) + existing_propositions_text
-        self.input_tokens = count_tokens(total_input_text)
 
-        # Parse the XML response to extract propositions
-        propositions_text = response.message.content or ""
-        self.output_tokens = count_tokens(propositions_text)  # count output tokens
+        # Send the request and capture wall-clock time
+        call_start_wall = time.time()
+        response_raw = await self.llm.achat(messages=[*messages, *prompt_messages])
+        call_end_wall = time.time()
 
-        new_propositions = self._parse_propositions_xml(propositions_text)
+        # response_raw.message.content could be: JSON string, plain string, or already a dict.
+        content_obj = None
+        try:
+            # Many LLM wrappers put the model output in response_raw.message.content
+            content_obj = getattr(response_raw, "message", None)
+            if content_obj is not None:
+                # content_obj may be a structure with `.content`, or itself a dict/string
+                if hasattr(content_obj, "content"):
+                    content = getattr(content_obj, "content")
+                else:
+                    content = content_obj
+            else:
+                # fallback to the raw object
+                content = response_raw
+        except Exception:
+            content = response_raw
+
+        # Normalize into parsed dict if possible
+        parsed = None
+        response_text = ""
+        # content might be dict already
+        if isinstance(content, dict):
+            parsed = content
+        elif isinstance(content, str):
+            # Try to parse JSON string; if it fails, keep as plain text
+            try:
+                parsed = json.loads(content)
+            except Exception:
+                parsed = None
+                response_text = content
+        else:
+            # try to coerce to str
+            try:
+                content_str = str(content)
+                try:
+                    parsed = json.loads(content_str)
+                except Exception:
+                    parsed = None
+                    response_text = content_str
+            except Exception:
+                parsed = None
+                response_text = ""
+
+        # If parsed is dict, try to extract a textual response in several common keys
+        # Ollama style: keys such as "response", "message", "propositions", "candidates", etc.
+        condense_extra_time = 0.0
+        condense_prompt_eval = 0
+        condense_eval = 0
+
+        if isinstance(parsed, dict):
+            # If Ollama returned structured 'propositions' list, convert to XML-like text to re-use XML parser
+            if "propositions" in parsed and isinstance(parsed["propositions"], list):
+                # Build an XML-like string so _parse_propositions_xml still works
+                list_propositions = parsed["propositions"]
+                # If items are dicts with 'content', prefer that
+                xml_parts = []
+                for item in list_propositions:
+                    if isinstance(item, dict):
+                        content_piece = item.get("content") or item.get("text") or str(item)
+                    else:
+                        content_piece = str(item)
+                    xml_parts.append(f"<proposition>{content_piece}</proposition>")
+                response_text = "<propositions>\n" + "\n".join(xml_parts) + "\n</propositions>"
+            else:
+                # Try common keys
+                response_text = parsed.get("response") or parsed.get("message") or parsed.get("text") or ""
+                # If response_text is list/dict again, stringify
+                if isinstance(response_text, (dict, list)):
+                    try:
+                        response_text = json.dumps(response_text)
+                    except Exception:
+                        response_text = str(response_text)
+        else:
+            # parsed is None — response_text was set earlier (plain string) or empty
+            response_text = response_text or ""
+
+        # Tokens/time bookkeeping: prefer returned metrics if present, else fallback to tokenizer+wall-time
+        # Ollama uses keys: prompt_eval_count, eval_count, total_duration (nanoseconds)
+        if isinstance(parsed, dict) and ("prompt_eval_count" in parsed or "eval_count" in parsed or "total_duration" in parsed):
+            try:
+                self.input_tokens = int(parsed.get("prompt_eval_count", count_tokens(total_input_text)))
+            except Exception:
+                self.input_tokens = count_tokens(total_input_text)
+            try:
+                self.output_tokens = int(parsed.get("eval_count", count_tokens(str(response_text))))
+            except Exception:
+                self.output_tokens = count_tokens(str(response_text))
+            # duration: nanoseconds in Ollama -> convert to seconds
+            if "total_duration" in parsed:
+                try:
+                    self.load_chat_history_time = float(parsed.get("total_duration", 0)) / 1_000_000_000.0
+                except Exception:
+                    self.load_chat_history_time = call_end_wall - call_start_wall
+            else:
+                self.load_chat_history_time = call_end_wall - call_start_wall
+        else:
+            # fallback counting
+            self.input_tokens = count_tokens(total_input_text)
+            self.output_tokens = count_tokens(str(response_text))
+            self.load_chat_history_time = call_end_wall - call_start_wall
+
+        # Parse the extracted propositions (XML or structured converted to XML-like above)
+        new_propositions = []
+        # If parsed had explicit 'propositions' list, prefer to use that directly (avoid re-parsing XML)
+        if isinstance(parsed, dict) and "propositions" in parsed and isinstance(parsed["propositions"], list):
+            # Extract content fields from structured list
+            for item in parsed["propositions"]:
+                if isinstance(item, dict):
+                    content_piece = item.get("content") or item.get("text") or None
+                    if content_piece:
+                        new_propositions.append(content_piece.strip())
+                else:
+                    new_propositions.append(str(item).strip())
+        else:
+            # Use the XML parser expecting <proposition> tags
+            propositions_text = response_text or ""
+            new_propositions = self._parse_propositions_xml(str(propositions_text))
 
         # Add new propositions to the list, avoiding exact-match duplicates
         for proposition in new_propositions:
@@ -208,18 +328,87 @@ class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
                 existing_propositions=existing_propositions_text,
                 max_propositions=self.max_propositions,
             )
-            response = await self.llm.achat(messages=[*messages, *prompt_messages])
 
-            # count tokens for condense output
-            self.input_tokens += count_tokens(existing_propositions_text)
-            self.output_tokens += count_tokens(response.message.content or "")
+            condense_start = time.time()
+            condense_raw = await self.llm.achat(messages=[*messages, *prompt_messages])
+            condense_end = time.time()
 
-            # Replace the propositions with the condensed list
-            new_propositions = self._parse_propositions_xml(response.message.content or "")
-            if new_propositions:
-                self.propositions = new_propositions
+            # Normalize condense response similarly
+            condense_content = None
+            try:
+                condense_content = getattr(condense_raw, "message", None)
+                if condense_content is not None and hasattr(condense_content, "content"):
+                    condense_content = getattr(condense_content, "content")
+            except Exception:
+                condense_content = condense_raw
 
-        self.load_chat_history_time = time.time() - start_time
+            condense_parsed = None
+            condense_text = ""
+            if isinstance(condense_content, dict):
+                condense_parsed = condense_content
+            elif isinstance(condense_content, str):
+                try:
+                    condense_parsed = json.loads(condense_content)
+                except Exception:
+                    condense_parsed = None
+                    condense_text = condense_content
+            else:
+                condense_text = str(condense_content or "")
+
+            # extract tokens/time for condense
+            if isinstance(condense_parsed, dict) and ("prompt_eval_count" in condense_parsed or "eval_count" in condense_parsed or "total_duration" in condense_parsed):
+                try:
+                    condense_prompt_eval = int(condense_parsed.get("prompt_eval_count", 0))
+                except Exception:
+                    condense_prompt_eval = count_tokens(existing_propositions_text)
+                try:
+                    condense_eval = int(condense_parsed.get("eval_count", 0))
+                except Exception:
+                    condense_eval = count_tokens(condense_text)
+                if "total_duration" in condense_parsed:
+                    try:
+                        condense_extra_time = float(condense_parsed.get("total_duration", 0)) / 1_000_000_000.0
+                    except Exception:
+                        condense_extra_time = condense_end - condense_start
+                else:
+                    condense_extra_time = condense_end - condense_start
+            else:
+                # fallback
+                condense_prompt_eval = count_tokens(existing_propositions_text)
+                condense_eval = count_tokens(condense_text)
+                condense_extra_time = condense_end - condense_start
+
+            # update totals
+            self.input_tokens += condense_prompt_eval
+            self.output_tokens += condense_eval
+            # Add the condense time to the load_chat_history_time
+            self.load_chat_history_time += condense_extra_time
+
+            # parse condensed propositions
+            condensed_new_props = []
+            if isinstance(condense_parsed, dict) and "propositions" in condense_parsed and isinstance(condense_parsed["propositions"], list):
+                for item in condense_parsed["propositions"]:
+                    if isinstance(item, dict):
+                        c = item.get("content") or item.get("text") or None
+                        if c:
+                            condensed_new_props.append(c.strip())
+                    else:
+                        condensed_new_props.append(str(item).strip())
+            else:
+                # condense_text may be empty string if condense_parsed provided 'response' key
+                if isinstance(condense_parsed, dict):
+                    condense_text = condense_parsed.get("response") or condense_parsed.get("message") or condense_text
+                    if isinstance(condense_text, (dict, list)):
+                        condense_text = json.dumps(condense_text)
+                condensed_new_props = self._parse_propositions_xml(condense_text or "")
+
+            if condensed_new_props:
+                self.propositions = condensed_new_props
+
+        # Ensure load_chat_history_time has at least the measured wall time as a fallback
+        total_wall = (time.time() - (start_time_ns / 1_000_000_000.0)) if start_time_ns else 0.0
+        if self.load_chat_history_time <= 0:
+            self.load_chat_history_time = total_wall
 
     def _parse_propositions_xml(self, xml_text: str) -> List[str]:
         """Parse propositions from XML format."""
