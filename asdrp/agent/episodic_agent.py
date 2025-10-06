@@ -1,14 +1,18 @@
 #############################################################################
 # File: episodic_agent.py
 #
-# Description: This agent is equipped with episodic memory. To run the agent, the user can manually hold a conversation
-# (see: if __name__ == "__main__") (1), the in-built test cases can be used (see: if __name__ == "__main__") (2), or
-# ChatMessage conversations can be directly passed to this agent from an external function (3).
+# Description:
+#   This agent is equipped with episodic memory.
 #
-# Author: Eric Vincent Fernandes
-# Email: evfdes@gmail.com
-# Date Modified: August 31, 2025
+# Authors:
+#   @author     Eric Vincent Fernandes
+#               - Created episodic_agent.py
+#
+# Date:
+#   Created:    August 5, 2025 (Eric Vincent Fernandes)
+#   Modified:   October 5, 2025 (Eric Vincent Fernandes)
 #############################################################################
+import time
 
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
@@ -20,57 +24,114 @@ from llama_index.core.agent.workflow import FunctionAgent, AgentOutput
 from llama_index.core.base.llms.types import ChatMessage
 from llama_index.core.tools import FunctionTool
 from llama_index.core.llms import LLM
-from llama_index.llms.openai import OpenAI
+from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
+from llama_index.core.utils import count_tokens
+from llama_index.llms.google_genai import GoogleGenAI
+from google.genai import types
 
 from asdrp.agent.base import AgentReply
 from asdrp.memory.episodic_memory import EpisodicMemoryBlock
+
+safety_settings = [
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+        # threshold=types.HarmBlockThreshold.OFF,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        # threshold=types.HarmBlockThreshold.OFF,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        # threshold=types.HarmBlockThreshold.OFF,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        # threshold=types.HarmBlockThreshold.OFF,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    )
+]
+
+gen_cfg = types.GenerateContentConfig(safety_settings=safety_settings, temperature=0.2)
+
+def get_default_llm(callback_manager=CallbackManager(handlers=[TokenCountingHandler()])) -> LLM:
+    return GoogleGenAI(
+        model="gemini-2.5-flash-lite",
+        temperature=0.2,
+        max_retries=100,
+        callback_manager=callback_manager,
+        generation_config=gen_cfg,
+    )
 
 class EpisodicAgent:
 
     def __init__(
         self,
-        llm: Optional[LLM] = None,
         tools: Optional[List[FunctionTool]] = None,
     ):
-        self.llm = llm or OpenAI(model = "gpt-4.1-mini")
-        self.memory_block = EpisodicMemoryBlock()
+        self.llm = get_default_llm()
+        self.memory_block = EpisodicMemoryBlock(name="episodic_memory")
         self.agent = FunctionAgent(llm = self.llm, tools = tools)
+        self.query_input_tokens = 0     # Number of tokens passed into the LLM within this agent
+        self.query_output_tokens = 0    # Number of tokens returned by the LLM within this agent
+        self.query_time = 0             # Duration of time the LLM took to respond
 
     async def achat(self, user_msg: str) -> AgentReply:
         """Handles one conversation turn and stores it in episodic memory."""
 
         try:
+            initial_query_time = time.time()
+
             # Retrieves relevant memory episodes
             episodes = self.parse_memories(text = await self.memory_block._aget([ChatMessage(role = "user", content = user_msg)]))
 
             # Parses relevant memory episodes into ChatMessage objects
+            # Parses relevant memory episodes into ChatMessage objects
             relevant_chat_history = []
             for entry in episodes:
+                # entry is a dict with keys like "[USER INPUT]", "[AGENT OUTPUT]", "[OUTCOME]" etc
                 if "[USER INPUT]" in entry:
-                    relevant_chat_history.append(ChatMessage(role = "user", content = entry["[USER INPUT]"]))
+                    relevant_chat_history.append(ChatMessage(role="user", content=entry.get("[USER INPUT]", "")))
                 if "[AGENT OUTPUT]" in entry:
-                    relevant_chat_history.append(ChatMessage(role = "assistant", content = entry["[AGENT OUTPUT]"]))
+                    agent_msg_content = entry.get("[AGENT OUTPUT]", "")
+                    # Append metadata fields in a human-readable way
+                    extra_info = []
+                    if entry.get("[OUTCOME]"):
+                        extra_info.append(f"Outcome: {entry.get('[OUTCOME]')}")
+                    if entry.get("[LOCATION]"):
+                        extra_info.append(f"Location: {entry.get('[LOCATION]')}")
+                    if entry.get("[REFLECTION]"):
+                        extra_info.append(f"Reflection: {entry.get('[REFLECTION]')}")
+                    if extra_info:
+                        agent_msg_content += "\n" + "\n".join(extra_info)
+                    relevant_chat_history.append(ChatMessage(role="assistant", content=agent_msg_content))
+
+            # Track input tokens using count_tokens
+            full_msg = " ".join([m.content for m in relevant_chat_history]) + " " + user_msg
+            self.query_input_tokens = count_tokens(full_msg)
 
             # Runs the agent with the user message and relevant memory episodes
             response = await self.agent.run(user_msg = user_msg, chat_history = relevant_chat_history)
 
             # Stores output into agent_text
             if isinstance(response, AgentOutput):
-                agent_text = response.response.content
+                output_text = response.response.content
             elif isinstance(response, ChatMessage):
-                agent_text = response.content
+                output_text = response.content
             else:
-                agent_text = str(response)
+                output_text = str(response)
 
-            # Stores conversation turn in episodic memory
-            await (self.memory_block._aput([
-                ChatMessage(role = "user", content = user_msg),
-                ChatMessage(role = "assistant", content = agent_text)
-            ]))
-
-            return AgentReply(response_str = agent_text)
+            self.query_output_tokens = count_tokens(output_text)
+            self.query_time = time.time() - initial_query_time      # Compute elapsed time for this question
+            return AgentReply(response_str = output_text)
 
         except Exception as e:
+            self.query_time = 0
+            self.query_input_tokens = 0
+            self.query_output_tokens = 0
             print(f"Error in EpisodicAgent: {e}")
             return AgentReply(response_str = "I'm sorry, I'm having trouble processing your request. Please try again.")
 
@@ -95,7 +156,6 @@ class EpisodicAgent:
                     relevant_memories.append(current_entry) # Adds current dictionary (complete memory episode) to dictionary
 
         return relevant_memories
-
 
     def get_all_memories(self):
         """Return all stored episodic memories."""
