@@ -20,13 +20,13 @@
 #               - Grouped inputs for PropositionalExtractionMemory by session to reduce LLM-calls and to store information in context of the overall conversation
 #               - Brought down eval runtime from ~18 mins for 1 question to ~8 mins for 500 questions (Dataset: longmemeval_m.json, CondensedMemoryBlock)
 #               - Modified dataset path-locator to be more general
-#               - Saved results for each question to JSON file once acquired, instead of at the end, for safe record keeping
+#               - Saved results for each question to JSON file once acquired instead of at the end, safer record keeping
 #               - Added functionality to save token metrics to a JSON file after runtime
 #
 # Date:
 #   Created:    August 3, 2025  (Varenya Garg)
 #   Modified:   August 22, 2025 (Oliver Hsu)
-#   Modified:   September 21, 2025 (Eric Vincent Fernandes)
+#   Modified:   October 5, 2025 (Eric Vincent Fernandes)
 #############################################################################
 
 import asyncio
@@ -35,7 +35,6 @@ import os
 import random
 import time
 import traceback
-from types import new_class
 from typing import List
 
 from llama_index.core.base.llms.types import ChatMessage
@@ -44,27 +43,26 @@ from asdrp.agent.summary_agent import SummaryAgent
 from asdrp.agent.reductive_agent import ReductiveAgent
 # from asdrp.agent.episodic_agent import EpisodicAgent
 # from asdrp.agent.hierarchical_vector_agent import HVMAgent
-# from google.genai.errors import ClientError
-from llama_index.core.memory import FactExtractionMemoryBlock
+from google.genai.errors import ClientError
 
-# # Import Gemini RateLimitError to detect rate-limit exceptions
-# try:
-#     from google.generativeai.errors import RateLimitError
-# except ImportError:
-#     # Fallback definition in case google.generativeai package is not available
-#     class RateLimitError(Exception):
-#         """Fallback RateLimitError used when generativeai.error isn't importable at analysis time."""
-#         pass
-#
-# # Constants to compute approximate cost for API usage (gemini-2.5-flash-lite)
-# # INPUT_COST_PER_1K = 0.00010  # Cost per 1000 input tokens ($)    [$0.10 * (1000/1000000)]
-# # OUTPUT_COST_PER_1K = 0.00040  # Cost per 1000 output tokens ($)   [$0.40 * (1000/1000000)]
-#
-# # Retry configuration for rate-limit handling
-# RETRY_ATTEMPTS = 20      # Maximum number of retry attempts on errors
-# RETRY_BASE_DELAY = 1.5   # Base seconds for exponential backoff between retries
-# RETRY_MAX_DELAY = 30     # Max seconds for exponential backoff between retries
-# # RETRY_BASE_DELAY = 10  # Base seconds for exponential backoff between retries
+# Import Gemini RateLimitError to detect rate-limit exceptions
+try:
+    from google.generativeai.errors import RateLimitError
+except ImportError:
+    # Fallback definition in case google.generativeai package is not available
+    class RateLimitError(Exception):
+        """Fallback RateLimitError used when generativeai.error isn't importable at analysis time."""
+        pass
+
+# Constants to compute approximate cost for API usage (gemini-2.5-flash-lite)
+INPUT_COST_PER_1K = 0.00010  # Cost per 1000 input tokens ($)    [$0.10 * (1000/1000000)]
+OUTPUT_COST_PER_1K = 0.00040  # Cost per 1000 output tokens ($)   [$0.40 * (1000/1000000)]
+
+# Retry configuration for rate-limit handling
+RETRY_ATTEMPTS = 8      # Maximum number of retry attempts on errors
+RETRY_BASE_DELAY = 1.5   # Base seconds for exponential backoff between retries
+RETRY_MAX_DELAY = 20     # Max seconds for exponential backoff between retries
+# RETRY_BASE_DELAY = 10  # Base seconds for exponential backoff between retries
 
 
 async def write_results_to_file(output_file, results, append=False):
@@ -169,69 +167,61 @@ async def load_chat_history(agent_object, haystack_sessions):
             await _retry_aput(memory_block, buffer)
 
 async def _retry_aput(memory_block, buffer):
-    try:
-        await memory_block._aput(buffer)
-    except Exception as e:
-        print(f"Error in memory_block._aput: {e}")
-        traceback.print_exc()
-        raise
-    # last_exc = None
-    # for attempt in range(1, RETRY_ATTEMPTS + 1):
-    #     try:
-    #         await memory_block._aput(buffer)
-    #         last_exc = None
-    #         break
-    #     except ClientError as e:   # <-- explicitly catch Gemini API errors
-    #         print(f"ClientError caught (attempt {attempt}): {e}")
-    #         last_exc = e
-    #         # Use retry logic for RESOURCE_EXHAUSTED
-    #         if getattr(e, "status", None) == "RESOURCE_EXHAUSTED":
-    #             # delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
-    #             delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
-    #             delay = delay * random.uniform(0.8, 1.2)    # add ±20% jitter
-    #             print(f"RESOURCE_EXHAUSTED detected, backing off {delay}s...")
-    #             await asyncio.sleep(delay)
-    #             continue
-    #         raise
-    #
-    #     except RuntimeError as e:
-    #         # specifically catch Gemini’s “Response was terminated early: MAX_TOKENS”
-    #         print(f"Gemini hit content issue (attempt {attempt}): {e}")
-    #         last_exc = e
-    #         if "MAX_TOKENS" in str(e) or "PROHIBITED_CONTENT" in str(e):
-    #             # delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
-    #             delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY-15)
-    #             delay = delay * random.uniform(0.8, 1.2)    # add ±20% jitter
-    #             print(f"Backing off {delay}s before retry...")
-    #             await asyncio.sleep(delay)
-    #             continue
-    #         raise  # different RuntimeError
-    #
-    #     except ValueError as e:
-    #         print(f"No candidates detected (attempt {attempt}): {e}")
-    #         last_exc = e
-    #         if "no candidates" in str(e):
-    #             delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY - 15)
-    #             delay = delay * random.uniform(0.8, 1.2)  # add ±20% jitter
-    #             print(f"Backing off {delay}s before retry...")
-    #             await asyncio.sleep(delay)
-    #             continue
-    #         raise  # different RuntimeError
-    #
-    #     except Exception as e:      # fallback for OpenAI or other errors
-    #         print(f"Error processing buffered turns (attempt {attempt}): {e}")
-    #         traceback.print_exc()
-    #         last_exc = e
-    #         if "Rate limit" in str(e) or "429" in str(e):
-    #             # delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
-    #             delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
-    #             delay = delay * random.uniform(0.8, 1.2)    # add ±20% jitter
-    #             print(f"RateLimit detected, backing off {delay}s before retry...")
-    #             await asyncio.sleep(delay)
-    #             continue
-    #         raise
-    # if last_exc is not None:
-    #     raise last_exc
+    last_exc = None
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            await memory_block._aput(buffer)
+            last_exc = None
+            break
+        except ClientError as e:   # <-- explicitly catch Gemini API errors
+            print(f"ClientError caught (attempt {attempt}): {e}")
+            last_exc = e
+            if getattr(e, "status", None) in [502, 503, 504]:
+                delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
+                delay *= random.uniform(0.8, 1.2)    # add ±20% jitter
+                print(f"Transient server error {e.status}, backing off {delay}s...")
+                await asyncio.sleep(delay)
+                continue
+            raise
+
+        except RuntimeError as e:
+            # specifically catch Gemini’s “Response was terminated early: MAX_TOKENS”
+            print(f"Gemini hit content issue (attempt {attempt}): {e}")
+            last_exc = e
+            if "MAX_TOKENS" in str(e) or "PROHIBITED_CONTENT" in str(e):
+                # delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY - 5)
+                delay = delay * random.uniform(0.8, 1.2)    # add ±20% jitter
+                print(f"Backing off {delay}s before retry...")
+                await asyncio.sleep(delay)
+                continue
+            raise  # different RuntimeError
+
+        except ValueError as e:
+            print(f"No candidates detected (attempt {attempt}): {e}")
+            last_exc = e
+            if "no candidates" in str(e):
+                delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY + 10)
+                delay = delay * random.uniform(0.8, 1.2)  # add ±20% jitter
+                print(f"Backing off {delay}s before retry...")
+                await asyncio.sleep(delay)
+                continue
+            raise  # different RuntimeError
+
+        except Exception as e:
+            print(f"Error processing buffered turns (attempt {attempt}): {e}")
+            traceback.print_exc()
+            last_exc = e
+            if "Rate limit" in str(e) or "429" in str(e):
+                # delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
+                delay = delay * random.uniform(0.8, 1.2)    # add ±20% jitter
+                print(f"RateLimit detected, backing off {delay}s before retry...")
+                await asyncio.sleep(delay)
+                continue
+            raise
+    if last_exc is not None:
+        raise last_exc
 
 def reset_memory(agent_object):
     """
@@ -259,7 +249,7 @@ class LongMemEvalRunner:
         # ==============================================================================================================
         # !!! IMPORTANT: CHANGE LIMIT AS NEEDED !!!
         # ==============================================================================================================
-        self.semaphore = asyncio.Semaphore(1)   # Limits number of questions processed at a time
+        self.semaphore = asyncio.Semaphore(30)   # Limits number of questions processed at a time
 
     async def process_question(self, question, question_num):
         """
@@ -286,43 +276,61 @@ class LongMemEvalRunner:
         lch_time = lch_input_tokens = lch_output_tokens = lch_cost = 0          # Initializes variables associated with data around loading the chat history into the memory block
         query_time = query_input_tokens = query_output_tokens = query_cost = 0  # Initializes variables associated with data around the agent's query
 
-        lch_cost = 0.0
-        query_cost = 0.0
-
         try:
             # Replay all haystack sessions into memory
             await load_chat_history(agent_object, question['haystack_sessions'])
 
-            lch_input_tokens = agent_object.memory_block.input_tokens  # Number of tokens sent to the memory block (haystack_sessions)
-            lch_output_tokens = agent_object.memory_block.output_tokens  # Number of tokens returned by the LLM response while parsing haystack_sessions
-            lch_time = agent_object.memory_block.load_chat_history_time  # Duration of time the LLM took to parse the haystack_sessions
+            lch_input_tokens = agent_object.memory_block.input_tokens       # Number of tokens sent to the memory block (haystack_sessions)
+            lch_output_tokens = agent_object.memory_block.output_tokens     # Number of tokens returned by the LLM response while parsing haystack_sessions
+            lch_time = agent_object.memory_block.load_chat_history_time     # Duration of time the LLM took to parse the haystack_sessions
 
-            # Single call to the agent (no rate-limit retry logic; local model)
-            try:
-                response = await agent_object.achat(question['question'])
-                answer_text = response.response_str
-                print(f"Got response: {answer_text[:100]}...")  # Show first 100 chars
-            except Exception as e:
-                print(f"Exception calling agent.achat: {e}")
-                traceback.print_exc()
-                raise
+            lch_cost = (lch_input_tokens / 1000.0) * INPUT_COST_PER_1K + (lch_output_tokens / 1000.0) * OUTPUT_COST_PER_1K  # Calculates real-world cost
 
-            query_input_tokens = agent_object.query_input_tokens  # Number of tokens passed into the agent (Prompt)
+            # Retry mechanism for rate-limit errors
+            last_exc = None
+            answer_text = None
+            for attempt in range(1, RETRY_ATTEMPTS + 1):
+                try:
+                    response = await agent_object.achat(question['question'])
+
+                    if not hasattr(response, "response_str") or not response.response_str:
+                        raise ValueError("Response has no candidates")  # Explicitly retry if response empty
+
+                    answer_text = response.response_str
+                    print(f"Got response: {answer_text[:100]}...")  # Show first 100 chars
+                    last_exc = None
+                    break
+                except ValueError as e:
+                    if "no candidates" in str(e):
+                        delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY + 10)
+                        delay *= random.uniform(0.8, 1.2)
+                        print(f"No candidates, backing off {delay}s before retry...")
+                        await asyncio.sleep(delay)
+                        last_exc = e
+                        continue
+                    raise
+                except RateLimitError as e:
+                    last_exc = e
+                    delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY - 5)
+                    print(f"RateLimitError attempt {attempt}/{RETRY_ATTEMPTS}: {e}. Backing off {delay}s...")
+                    await asyncio.sleep(delay)
+                    continue
+                except Exception as e:
+                    print(f"[DEBUG] Exception type={type(e)} message={e}")
+                    raise
+
+            if last_exc is not None and answer_text is None:    # Still failing rate-limit after retries
+                raise last_exc
+
+            query_input_tokens = agent_object.query_input_tokens    # Number of tokens passed into the agent (Prompt)
             query_output_tokens = agent_object.query_output_tokens  # Number of tokens returned by the agent (Response)
-            query_time = agent_object.query_time  # Duration of time the agent took to respond
-
-            # costs disabled
-            # query_cost = ...
+            query_time = agent_object.query_time                    # Duration of time the agent took to respond
+            query_cost = (query_input_tokens / 1000.0) * INPUT_COST_PER_1K + (query_output_tokens / 1000.0) * OUTPUT_COST_PER_1K    # Calculates real-world cost
 
         except Exception as e:
             print(f"Error processing question {question_num + 1}: {e}")
             traceback.print_exc()
             answer_text = f"Error: {str(e)}"
-
-            query_input_tokens = agent_object.query_input_tokens    # Number of tokens passed into the agent (Prompt)
-            query_output_tokens = agent_object.query_output_tokens  # Number of tokens returned by the agent (Response)
-            query_time = agent_object.query_time                    # Duration of time the agent took to respond
-            # query_cost = (query_input_tokens / 1000.0) * INPUT_COST_PER_1K + (query_output_tokens / 1000.0) * OUTPUT_COST_PER_1K    # Calculates real-world cost
 
         overall_input_tokens = lch_input_tokens + query_input_tokens    # Total amount of information (prompt/haystack_sessions) passed into the agent/memory pair
         overall_output_tokens = lch_output_tokens + query_output_tokens # Total amount of tokens "returned" by the agent/memory pair
@@ -485,7 +493,7 @@ class LongMemEvalRunner:
         # ==============================================================================================================
         # !!! IMPORTANT: SET BATCH SIZE SAME AS SEMAPHORE LIMIT !!!
         # ==============================================================================================================
-        batch_size = 1
+        batch_size = 30
 
         print(f"Running {batch_size} questions in parallel...")
 
@@ -606,7 +614,7 @@ def main():
     # ==================================================================================================================
     # !!! IMPORTANT: CHANGE FILE NAME BASED ON AGENT !!!
     # ==================================================================================================================
-    output_file = "results/reductive_agent_responses.json"
+    output_file = "asdrp/results/reductive_agent_responses.json"
 
     # Ensure output directory exists
     os.makedirs("results", exist_ok=True)

@@ -9,10 +9,11 @@
 #               - Created summary_agent.py
 #   @author     Eric Vincent Fernandes
 #               - Implemented tracking for token/cost metrics
+#               - Modified code to be compatible with Gemini (GenAI)
 #
 # Date:
 #   Created:    July 4, 2025  (Theodore Mui)
-#   Modified:   September 20, 2025 (Eric Vincent Fernandes)
+#   Modified:   October 5, 2025 (Eric Vincent Fernandes)
 #############################################################################
 
 from dotenv import load_dotenv, find_dotenv
@@ -28,21 +29,46 @@ from llama_index.core.utils import count_tokens
 from llama_index.core.base.llms.types import ChatMessage
 from llama_index.core.tools import FunctionTool
 from llama_index.core.llms import LLM
-from llama_index.core.memory import (
-    Memory, InsertMethod
-)
+from llama_index.core.memory import (Memory, InsertMethod)
 from llama_index.llms.google_genai import GoogleGenAI
+from google.genai import types
 
 from asdrp.agent.base import AgentReply
 from asdrp.memory.condensed_memory import CondensedMemoryBlock
 
 
+safety_settings = [
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+        # threshold=types.HarmBlockThreshold.OFF,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        # threshold=types.HarmBlockThreshold.OFF,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        # threshold=types.HarmBlockThreshold.OFF,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        # threshold=types.HarmBlockThreshold.OFF,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    )
+]
+
+gen_cfg = types.GenerateContentConfig(safety_settings=safety_settings, temperature=0.2)
+
 def get_default_llm(callback_manager=CallbackManager(handlers=[TokenCountingHandler()])) -> LLM:
     return GoogleGenAI(
         model="gemini-2.5-flash-lite",
-        temperature=0.3,  # small randomness, still mostly deterministic,
+        temperature=0.2, # small randomness, still mostly deterministic
         max_retries=100,
         callback_manager=callback_manager,
+        generation_config=gen_cfg,
     )
 
 
@@ -63,20 +89,20 @@ class SummaryAgent:
 
     async def achat(self, user_msg: str) -> AgentReply:
         try:
-            # Count tokens for the new message only
-            user_msg_tokens = count_tokens(user_msg)
 
-            # Measure tokens passed into the LLM within this agent
-            self.query_input_tokens = self.memory_block.input_tokens + user_msg_tokens
+            full_msg = user_msg + str(await self.memory_block._aget())
+
+            # Count tokens passed into the LLM within this agent
+            self.query_input_tokens = count_tokens(full_msg)
 
             initial_query_time = time.time()
 
             response = await self.agent.run(user_msg=user_msg, memory=self.memory)
 
-            # time taken
+            # Compute elapsed time for this question
             self.query_time = time.time() - initial_query_time
 
-            # measure tokens coming OUT
+            # Track output tokens using count_tokens
             if isinstance(response, AgentOutput):
                 output_text = response.response.content
             elif isinstance(response, ChatMessage):
@@ -85,7 +111,6 @@ class SummaryAgent:
                 output_text = str(response)
 
             self.query_output_tokens = count_tokens(output_text)
-
             return AgentReply(response_str=output_text)
 
         except Exception as e:
@@ -112,49 +137,16 @@ class SummaryAgent:
             memory_blocks=[self.memory_block]
         )
 
-
-#-------------------------------------
-# Main: smoke tests
-#-------------------------------------
-
-def print_result(test_name, passed):
-    print(f"{test_name}: {'PASSED' if passed else 'FAILED'}")
-
-async def smoke_test_summary_agent_basic():
-    print("Running basic instantiation and chat test...")
-    agent = SummaryAgent()
-    reply = await agent.achat("Hello, agent!")
-    print_result("Basic chat reply type", isinstance(reply, AgentReply))
-    print(f"Reply: {reply.response_str}")
-
-# async def smoke_test_summary_agent_with_memory():
-#     print("Running memory persistence test...")
-#     memory = Memory.from_defaults(session_id="test_session", token_limit=50)
-#     agent = SummaryAgent(memory=memory)
-#     msg1 = "Remember this: The sky is blue."
-#     await agent.achat(msg1)
-#     # Check memory contents
-#     mem_items = list(memory.get_all())
-#     print_result("Memory stores at least one item after chat", len(mem_items) > 0)
-#     print(f"Memory contents: {mem_items}")
-
-async def smoke_test_summary_agent_custom_tools():
-    print("Running custom tools test...")
-    def echo_tool(input_str: str) -> str:
-        return f"Echo: {input_str}"
-    tool = FunctionTool.from_defaults(fn=echo_tool, name="echo_tool", description="Echo the input string")
-    agent = SummaryAgent(tools=[tool])
-    reply = await agent.achat("Call the echo_tool with input_str='test123'")
-    print_result("Custom tool reply contains 'Echo'", "Echo" in reply.response_str)
-    print(f"Reply: {reply.response_str}")
-
-async def main():
-    await smoke_test_summary_agent_basic()
-    # await smoke_test_summary_agent_with_memory()
-    await smoke_test_summary_agent_custom_tools()
-    print("All smoke tests completed.")
-
-
 if __name__ == "__main__":
-    asyncio.run(main())
 
+    # For running the agent with human input:
+    agent = SummaryAgent()
+
+    user_input = input("Enter your input: ")
+    while user_input.strip() != "":
+        reply = asyncio.run(agent.achat(user_input))
+        print(f"Agent Response: {reply.response_str}")
+        user_input = input("Enter your input: ")
+
+    print("Thank you for chatting with me!")
+    agent._create_memory()
