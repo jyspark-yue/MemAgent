@@ -9,36 +9,66 @@
 #               - Created reductive_agent.py
 #   @author     Eric Vincent Fernandes
 #               - Implemented tracking for token/cost metrics
+#               - Modified code to be compatible with Gemini (GenAI)
 #
 # Date:
 #   Created:    July 4, 2025  (Theodore Mui)
-#   Modified:   September 20, 2025 (Eric Vincent Fernandes)
+#   Modified:   October 5, 2025 (Eric Vincent Fernandes)
 #############################################################################
 
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
 
+import time
 import asyncio
 from typing import List
-import time
-import tiktoken
-import re
 
 from llama_index.core.agent.workflow import FunctionAgent, AgentOutput
 from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
 from llama_index.core.base.llms.types import ChatMessage
 from llama_index.core.tools import FunctionTool
 from llama_index.core.llms import LLM
-from llama_index.core.memory import (
-    Memory, InsertMethod
-)
-from llama_index.llms.openai import OpenAI
+from llama_index.core.memory import (Memory, InsertMethod)
+from llama_index.core.utils import count_tokens
+from llama_index.llms.google_genai import GoogleGenAI
+from google.genai import types
 
 from asdrp.agent.base import AgentReply
 from asdrp.memory.proposition_extraction_memory import PropositionExtractionMemoryBlock
 
+safety_settings = [
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+        # threshold=types.HarmBlockThreshold.OFF,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        # threshold=types.HarmBlockThreshold.OFF,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        # threshold=types.HarmBlockThreshold.OFF,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        # threshold=types.HarmBlockThreshold.OFF,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    )
+]
+
+gen_cfg = types.GenerateContentConfig(safety_settings=safety_settings, temperature=0.2)
+
 def get_default_llm(callback_manager=CallbackManager(handlers=[TokenCountingHandler()])) -> LLM:
-    return OpenAI(model="gpt-5-nano-2025-08-07", temperature=0.0, timeout=1200.0, callback_manager=callback_manager)
+    return GoogleGenAI(
+        model="gemini-2.5-flash-lite",
+        temperature=0.2,
+        max_retries=100,
+        callback_manager=callback_manager,
+        generation_config=gen_cfg,
+    )
 
 class ReductiveAgent:
     def __init__(
@@ -55,15 +85,12 @@ class ReductiveAgent:
         )
         self.memory = memory
         self.agent = self._create_agent(memory, tools)
-        self.tokenizer: tiktoken.Encoding = tiktoken.get_encoding("o200k_base")
         self.query_input_tokens = 0     # Number of tokens passed into the LLM within this agent
         self.query_output_tokens = 0    # Number of tokens returned by the LLM within this agent
         self.query_time = 0             # Duration of time the LLM took to respond
 
     async def achat(self, user_msg: str) -> AgentReply:
         try:
-            # Measure tokens passed into agent by memory
-            self.query_input_tokens = self.memory_block.input_tokens
             initial_query_time = time.time()
 
             # Prepend known propositions to the user message if available, with explicit instruction
@@ -79,21 +106,23 @@ class ReductiveAgent:
                                 "When answering, reference the known propositions above if relevant.\n"
                             )
 
+            # Track input tokens using count_tokens
             full_msg = propositions + user_msg
-            response = await self.agent.run(user_msg=full_msg, memory=self.memory)
+            self.query_input_tokens = count_tokens(full_msg)
 
-            # Compute query tokens and cost for this question
-            self.query_time = time.time() - initial_query_time
+            response = await self.agent.run(user_msg=user_msg, memory=self.memory)
 
+            # Track output tokens using count_tokens
             if isinstance(response, AgentOutput):
-                self.query_output_tokens = len(self.tokenizer.encode(response.response.content))
-                return AgentReply(response_str=response.response.content)
+                output_text = response.response.content
             elif isinstance(response, ChatMessage):
-                self.query_output_tokens = len(self.tokenizer.encode(response.content))
-                return AgentReply(response_str=response.content)
+                output_text = response.content
             else:
-                self.query_output_tokens = len(self.tokenizer.encode(str(response)))
-                return AgentReply(response_str=str(response))
+                output_text = str(response)
+
+            self.query_output_tokens = count_tokens(output_text)
+            self.query_time = time.time() - initial_query_time      # Compute elapsed time for this question
+            return AgentReply(response_str=output_text)
 
         except Exception as e:
             self.query_time = 0
@@ -119,106 +148,16 @@ class ReductiveAgent:
             memory_blocks=[self.memory_block]
         )
 
-
-#-----------------------------------------
-# Main: proposition extraction smoke tests
-#-----------------------------------------
-
-def print_result(test_name, passed):
-    print(f"{test_name}: {'PASSED' if passed else 'FAILED'}")
-
-async def smoke_test_proposition_extraction():
-    """Test that propositions are extracted and stored from user input."""
-    memory = ReductiveAgent()._create_memory()
-    agent = ReductiveAgent(memory=memory)
-    await agent.achat("I believe the sky is blue.")
-    # Find the proposition block
-    block = None
-    for b in getattr(memory, "memory_blocks", []):
-        if isinstance(b, PropositionExtractionMemoryBlock):
-            block = b
-            break
-    props = await block._aget() if block else ""
-    passed = ("sky is blue" in props) or ("Sky is blue" in props)
-    print_result("Proposition extraction", passed)
-    print(f"Extracted propositions: {props}")
-
-async def smoke_test_proposition_deduplication():
-    """Test that duplicate propositions are not stored multiple times."""
-    memory = ReductiveAgent()._create_memory()
-    agent = ReductiveAgent(memory=memory)
-    await agent.achat("I believe the sky is blue.")
-    await agent.achat("I believe the sky is blue.")
-    block = None
-    for b in getattr(memory, "memory_blocks", []):
-        if isinstance(b, PropositionExtractionMemoryBlock):
-            block = b
-            break
-    props = await block._aget() if block else ""
-    count = props.count("sky is blue") + props.count("Sky is blue")
-    passed = count == 1
-    print_result("Proposition deduplication", passed)
-    print(f"Extracted propositions: {props}")
-
-async def smoke_test_multiple_propositions():
-    """Test that multiple distinct propositions are extracted and stored."""
-    memory = ReductiveAgent()._create_memory()
-    agent = ReductiveAgent(memory=memory)
-    await agent.achat("The sky is blue. Water is wet.")
-    block = None
-    for b in getattr(memory, "memory_blocks", []):
-        if isinstance(b, PropositionExtractionMemoryBlock):
-            block = b
-            break
-    props = await block._aget() if block else ""
-    props_lower = props.lower()
-    passed = ("sky is blue" in props_lower and "water is wet" in props_lower)
-    print_result("Multiple proposition extraction", passed)
-    print(f"Extracted propositions: {props}")
-
-async def smoke_test_proposition_limit():
-    """Test that the max_propositions limit is respected."""
-    block = PropositionExtractionMemoryBlock(
-        name="proposition_extraction_memory",
-        llm=OpenAI(model="gpt-4.1-mini"),
-        max_propositions=2,
-    )
-    memory = Memory.from_defaults(
-        session_id="test_session",
-        token_limit=50,
-        memory_blocks=[block],
-    )
-    agent = ReductiveAgent(memory=memory)
-    await agent.achat("It is a fact that the sky is blue.")
-    print("After 1st achat:", await block._aget())
-    await agent.achat("It is a fact that water is wet.")
-    print("After 2nd achat:", await block._aget())
-    await agent.achat("It is a fact that grass is green.")
-    props = await block._aget()
-    print("After 3rd achat:", props)
-    count = props.count("<proposition>")
-    passed = count == 2
-    print_result("Proposition limit respected", passed)
-    print(f"Extracted propositions: {props}")
-
-async def smoke_test_agent_reply_includes_propositions():
-    """Test that the agent can reference extracted propositions in its reply."""
-    memory = ReductiveAgent()._create_memory()
-    agent = ReductiveAgent(memory=memory)
-    await agent.achat("I believe the sky is blue.")
-    reply = await agent.achat("What do you know about the sky?")
-    passed = ("sky is blue" in reply.response_str) or ("Sky is blue" in reply.response_str)
-    print_result("Agent reply references proposition", passed)
-    print(f"Agent reply: {reply.response_str}")
-
-async def main():
-    await smoke_test_proposition_extraction()
-    await smoke_test_proposition_deduplication()
-    await smoke_test_multiple_propositions()
-    await smoke_test_proposition_limit()
-    await smoke_test_agent_reply_includes_propositions()
-    print("All proposition extraction smoke tests completed.")
-
 if __name__ == "__main__":
-    asyncio.run(main())
 
+    # For running the agent with human input:
+    agent = ReductiveAgent()
+
+    user_input = input("Enter your input: ")
+    while user_input.strip() != "":
+        reply = asyncio.run(agent.achat(user_input))
+        print(f"Agent Response: {reply.response_str}")
+        user_input = input("Enter your input: ")
+
+    print("Thank you for chatting with me!")
+    agent._create_memory()
