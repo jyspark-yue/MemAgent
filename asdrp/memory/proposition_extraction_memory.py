@@ -210,9 +210,7 @@ class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
             )
 
         # Create the prompt
-        prompt_messages = self.proposition_extraction_prompt_template.format_messages(
-            existing_propositions=existing_propositions_text,
-        )
+        prompt_messages = self.proposition_extraction_prompt_template.format_messages(existing_propositions=existing_propositions_text)
 
         # Get the propositions extraction
         response = await self.llm.achat(messages=[*messages, *prompt_messages])

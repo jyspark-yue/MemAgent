@@ -91,6 +91,8 @@ class ReductiveAgent:
 
     async def achat(self, user_msg: str) -> AgentReply:
         try:
+            initial_query_time = time.time()
+
             # Prepend known propositions to the user message if available, with explicit instruction
             propositions = ""
             if self.memory and hasattr(self.memory, "memory_blocks"):
@@ -104,17 +106,11 @@ class ReductiveAgent:
                                 "When answering, reference the known propositions above if relevant.\n"
                             )
 
-            full_msg = propositions + user_msg
-
             # Track input tokens using count_tokens
+            full_msg = propositions + user_msg
             self.query_input_tokens = count_tokens(full_msg)
 
-            initial_query_time = time.time()
-
             response = await self.agent.run(user_msg=user_msg, memory=self.memory)
-
-            # Compute elapsed time for this question
-            self.query_time = time.time() - initial_query_time
 
             # Track output tokens using count_tokens
             if isinstance(response, AgentOutput):
@@ -125,6 +121,7 @@ class ReductiveAgent:
                 output_text = str(response)
 
             self.query_output_tokens = count_tokens(output_text)
+            self.query_time = time.time() - initial_query_time      # Compute elapsed time for this question
             return AgentReply(response_str=output_text)
 
         except Exception as e:

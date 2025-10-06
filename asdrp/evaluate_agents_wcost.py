@@ -41,7 +41,7 @@ from llama_index.core.base.llms.types import ChatMessage
 
 from asdrp.agent.summary_agent import SummaryAgent
 from asdrp.agent.reductive_agent import ReductiveAgent
-# from asdrp.agent.episodic_agent import EpisodicAgent
+from asdrp.agent.episodic_agent import EpisodicAgent
 # from asdrp.agent.hierarchical_vector_agent import HVMAgent
 from google.genai.errors import ClientError
 
@@ -599,7 +599,7 @@ def main():
     # ==================================================================================================================
     # !!! IMPORTANT: CHANGE AGENT AS NEEDED !!!
     # ==================================================================================================================
-    runner = LongMemEvalRunner(ReductiveAgent)
+    runner = LongMemEvalRunner(SummaryAgent)
 
     # Get the directory where this script lives
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
