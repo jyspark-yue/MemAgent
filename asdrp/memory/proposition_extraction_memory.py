@@ -34,13 +34,8 @@ DEFAULT_EXTRACT_PROMPT = RichPromptTemplate("""You are a precise proposition ext
 
 INSTRUCTIONS:
 1. Review the conversation segment and existing propositions provided prior to this message.
-2. Extract specific, concrete propositions (facts, opinions, preferences, beliefs, experiences, and goals) the user has disclosed or important information discovered.
-3. Focus on all types of information including:
-   - Factual information (preferences, personal details, requirements, constraints, context)
-   - Opinions and beliefs (what the user thinks, feels, or believes about topics)
-   - Preferences and choices (what the user likes, dislikes, or prefers)
-   - Experiences and anecdotes (what the user has done or experienced)
-   - Goals and intentions (what the user wants to achieve or plans to do)
+2. Extract specific, concrete propositions the user has disclosed or important information discovered
+3. Focus on all types of information like preferences, personal details, requirements, constraints, or context
 4. Format each proposition as a separate <proposition> XML tag.
 5. Include both objective facts and subjective opinions - capture the full range of user-disclosed information.
 6. Do not duplicate propositions that are already in the existing propositions list.
@@ -68,12 +63,7 @@ DEFAULT_CONDENSE_PROMPT = RichPromptTemplate("""You are a precise proposition co
 INSTRUCTIONS:
 1. Review the current list of existing propositions.
 2. Condense the propositions into a more concise list, less than {{ max_propositions }} propositions.
-3. Focus on all types of information including:
-   - Factual information (preferences, personal details, requirements, constraints, context)
-   - Opinions and beliefs (what the user thinks, feels, or believes about topics)
-   - Preferences and choices (what the user likes, dislikes, or prefers)
-   - Experiences and anecdotes (what the user has done or experienced)
-   - Goals and intentions (what the user wants to achieve or plans to do)
+3. Focus on all types of information like preferences, personal details, requirements, constraints, or context
 4. Format each proposition as a separate <proposition> XML tag.
 5. Include both objective facts and subjective opinions - preserve the full range of user information.
 6. Do not duplicate propositions that are already in the existing propositions list.
