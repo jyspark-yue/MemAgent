@@ -41,7 +41,7 @@ from llama_index.core.base.llms.types import ChatMessage
 from asdrp.agent.summary_agent import SummaryAgent
 from asdrp.agent.reductive_agent import ReductiveAgent
 # from asdrp.agent.episodic_agent import EpisodicAgent
-# from asdrp.agent.hierarchical_vector_agent import HVMAgent
+from asdrp.agent.hvm_agent import HVMAgent
 
 # Import the OpenAI RateLimitError to detect rate-limit exceptions
 try:
@@ -112,7 +112,7 @@ async def load_chat_history(agent_object, haystack_sessions):
         haystack_sessions (list[list[dict]]): List of chat sessions
     """
 
-    print(f"Processing {len(haystack_sessions)} haystack sessions...")
+    print(f"\nProcessing {len(haystack_sessions)} haystack sessions...")
 
     memory_block = agent_object.memory_block
     can_batch = isinstance(agent_object, ReductiveAgent)    # ReductiveAgent can accept batched user-assistant pairs without its quality being negatively affected
@@ -317,7 +317,7 @@ class LongMemEvalRunner:
             start = time.monotonic()
             await self.semaphore.acquire()      # No semaphore timeout
             waited = time.monotonic() - start
-            print(f"Task {i} acquired semaphore after waiting {waited:.1f}s")
+            print(f"\n\nTask {i} acquired semaphore after waiting {waited:.1f}s")
             acquired = True
 
         except asyncio.TimeoutError:
@@ -538,13 +538,14 @@ def main():
     # ==================================================================================================================
     # !!! IMPORTANT: CHANGE AGENT AS NEEDED !!!
     # ==================================================================================================================
-    runner = LongMemEvalRunner(ReductiveAgent)
+    runner = LongMemEvalRunner(HVMAgent)
 
     # Get the directory where this script lives
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     # Build the full path to your JSON file
     data_file = os.path.join(BASE_DIR, "eval", "data", "custom_history", "longmemeval_m.json")
+    print(data_file)
 
     # Example: check it exists before loading
     if not os.path.exists(data_file):
@@ -553,10 +554,12 @@ def main():
     # ==================================================================================================================
     # !!! IMPORTANT: CHANGE FILE NAME BASED ON AGENT !!!
     # ==================================================================================================================
-    output_file = "results/reductive_agent_responses.json"
+    output_file = "results/hvm_agent_response.json"
 
     # Ensure output directory exists
     os.makedirs("results", exist_ok=True)
+
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
     # Run evaluation asynchronously
     asyncio.run(

@@ -15,10 +15,14 @@ from llama_index.llms.openai import OpenAI
 
 import asyncio
 
+from typing import List, Optional
+import uuid
+
 from asdrp.agent.base import AgentReply
 from llama_index.core.agent.workflow import FunctionAgent
-from asdrp.memory.hvm import HierarchicalVectorMemory
 from llama_index.core.memory import Memory
+from llama_index.core.tools import FunctionTool
+from asdrp.memory.hvm import HierarchicalVectorMemory
 
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
@@ -31,14 +35,22 @@ class HVMAgent:
         model: str = "o4-mini",
         top_k: int = 3,
         retrieval_mode: str = "tree_traversal",
+        tools: Optional[List[FunctionTool]] = None,
     ) -> None:
+        tools = tools or []
+
+        # Configuration so memory reset can rebuild identical state
+        self.model = model
+        self.top_k = top_k
+        self.retrieval_mode = retrieval_mode
+
         # Llama‑Index’s OpenAI wrapper
         self.llm = OpenAI(model=model)
 
-        # Memory storage
-        self.memory_block = HierarchicalVectorMemory(
-            similarity_top_k=top_k, mode=retrieval_mode
-        )
+        # Memory storage / state
+        self.memory_block: HierarchicalVectorMemory | None = None
+        self.memory = self._create_memory()
+        self.agent = self._create_agent(self.memory, tools)
 
 
     async def achat(self, user_msg: str) -> AgentReply:
@@ -69,24 +81,44 @@ class HVMAgent:
             return AgentReply(response_str="I'm sorry, I'm having trouble processing your request. Please try again.")
 
 
-    # def _create_agent(self, memory: Memory, tools: List[FunctionTool]) -> FunctionAgent:
-    #     return FunctionAgent(
-    #         llm=self.llm,
-    #         memory=memory,
-    #         tools=tools,
-    #     )
-    
-
-    # def _create_memory(self) -> Memory:
-    #     return Memory.from_defaults(
-    #         session_id="proposition_agent",
-    #         token_limit=50,                       
-    #         chat_history_token_ratio=0.7,        
-    #         token_flush_size=10,                 
-    #         insert_method=InsertMethod.SYSTEM,
-    #         memory_blocks=[self.memory_block]
-    #     )
+    def _create_memory(self) -> HierarchicalVectorMemory:
+        """Initiate a new instance."""
         
+        # Drop the previous collection
+        if self.memory_block is not None:
+            client = getattr(self.memory_block, "_client", None)
+            vector_store = getattr(self.memory_block, "_vector_store", None)
+            collection_name = getattr(vector_store, "collection_name", None)
+            if client and collection_name:
+                try:
+                    client.delete_collection(collection_name=collection_name)
+                except Exception:
+                    pass
+        
+        collection_name = f"agent_mem_hvm_{uuid.uuid4().hex}"
+        memory_block = HierarchicalVectorMemory(
+            collection=collection_name,
+            similarity_top_k=self.top_k,
+            mode=self.retrieval_mode,
+        )
+
+        self.memory_block = memory_block
+        self.memory = memory_block
+        return memory_block
+
+
+    def _create_agent(self, memory: Memory, tools: List[FunctionTool]) -> FunctionAgent:
+        """Recreate agent"""
+
+        agent = FunctionAgent(
+            llm=self.llm,
+            tools=tools,
+        )
+
+        setattr(agent, "memory", memory)
+        self.agent = agent
+        return agent
+
 
 
     def print_memory_tree(self, max_chars: int = 80) -> None:
