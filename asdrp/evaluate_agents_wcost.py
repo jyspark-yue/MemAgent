@@ -42,7 +42,7 @@ from llama_index.core.base.llms.types import ChatMessage
 from asdrp.agent.summary_agent import SummaryAgent
 from asdrp.agent.reductive_agent import ReductiveAgent
 from asdrp.agent.episodic_agent import EpisodicAgent
-# from asdrp.agent.hierarchical_vector_agent import HVMAgent
+# from asdrp.agent.hvm_agent import HVMAgent
 from google.genai.errors import ClientError
 
 # Import Gemini RateLimitError to detect rate-limit exceptions
@@ -116,10 +116,11 @@ async def load_chat_history(agent_object, haystack_sessions):
         haystack_sessions (list[list[dict]]): List of chat sessions
     """
 
+    print(f"Running {agent_object}...")
     print(f"Processing {len(haystack_sessions)} haystack sessions...")
 
     memory_block = agent_object.memory_block
-    can_batch = isinstance(agent_object, ReductiveAgent)    # ReductiveAgent can accept batched user-assistant pairs without its quality being negatively affected
+    can_batch = isinstance(agent_object, ReductiveAgent) or isinstance(agent_object, EpisodicAgent)     # ReductiveAgent can accept batched user-assistant pairs without its quality being negatively affected
 
     session_count = 0
     for session in haystack_sessions:
@@ -563,7 +564,7 @@ class LongMemEvalRunner:
         # ==============================================================================================================
         # !!! IMPORTANT: CHANGE SUMMARY FILE NAME AS NEEDED !!!
         # ==============================================================================================================
-        summary_file = os.path.join(os.path.dirname(output_file), "reductive_agent_performance_summary.json")
+        summary_file = os.path.join(os.path.dirname(output_file), "episodic_agent_performance_summary.json")
 
         # --- write summary to JSON file in the same folder as output_file ---
         with open(summary_file, "w") as f:
@@ -599,7 +600,7 @@ def main():
     # ==================================================================================================================
     # !!! IMPORTANT: CHANGE AGENT AS NEEDED !!!
     # ==================================================================================================================
-    runner = LongMemEvalRunner(SummaryAgent)
+    runner = LongMemEvalRunner(EpisodicAgent)
 
     # Get the directory where this script lives
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -614,7 +615,7 @@ def main():
     # ==================================================================================================================
     # !!! IMPORTANT: CHANGE FILE NAME BASED ON AGENT !!!
     # ==================================================================================================================
-    output_file = "asdrp/results/reductive_agent_responses.json"
+    output_file = "asdrp/results/episodic_agent_responses.json"
 
     # Ensure output directory exists
     os.makedirs("results", exist_ok=True)

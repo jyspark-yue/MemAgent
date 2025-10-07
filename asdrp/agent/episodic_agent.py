@@ -12,17 +12,15 @@
 #   Created:    August 5, 2025 (Eric Vincent Fernandes)
 #   Modified:   October 5, 2025 (Eric Vincent Fernandes)
 #############################################################################
-import time
 
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
 
+import time
 import asyncio
-from typing import List, Optional
+from typing import List
 
-from llama_index.core.agent.workflow import FunctionAgent, AgentOutput
 from llama_index.core.base.llms.types import ChatMessage
-from llama_index.core.tools import FunctionTool
 from llama_index.core.llms import LLM
 from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
 from llama_index.core.utils import count_tokens
@@ -32,7 +30,7 @@ from google.genai import types
 from asdrp.agent.base import AgentReply
 from asdrp.memory.episodic_memory import EpisodicMemoryBlock
 
-safety_settings = [
+_safety_settings = [
     types.SafetySetting(
         category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
         # threshold=types.HarmBlockThreshold.OFF,
@@ -55,40 +53,33 @@ safety_settings = [
     )
 ]
 
-gen_cfg = types.GenerateContentConfig(safety_settings=safety_settings, temperature=0.2)
+_gen_cfg = types.GenerateContentConfig(safety_settings=_safety_settings, temperature=0.2)
 
-def get_default_llm(callback_manager=CallbackManager(handlers=[TokenCountingHandler()])) -> LLM:
+def _get_default_llm(callback_manager=CallbackManager(handlers=[TokenCountingHandler()])) -> LLM:
     return GoogleGenAI(
         model="gemini-2.5-flash-lite",
         temperature=0.2,
         max_retries=100,
         callback_manager=callback_manager,
-        generation_config=gen_cfg,
+        generation_config=_gen_cfg,
     )
 
 class EpisodicAgent:
 
-    def __init__(
-        self,
-        tools: Optional[List[FunctionTool]] = None,
-    ):
-        self.llm = get_default_llm()
+    def __init__(self):
+        self.llm = _get_default_llm()
         self.memory_block = EpisodicMemoryBlock(name="episodic_memory")
-        self.agent = FunctionAgent(llm = self.llm, tools = tools)
         self.query_input_tokens = 0     # Number of tokens passed into the LLM within this agent
         self.query_output_tokens = 0    # Number of tokens returned by the LLM within this agent
         self.query_time = 0             # Duration of time the LLM took to respond
 
     async def achat(self, user_msg: str) -> AgentReply:
-        """Handles one conversation turn and stores it in episodic memory."""
-
         try:
             initial_query_time = time.time()
 
             # Retrieves relevant memory episodes
             episodes = self.parse_memories(text = await self.memory_block._aget([ChatMessage(role = "user", content = user_msg)]))
 
-            # Parses relevant memory episodes into ChatMessage objects
             # Parses relevant memory episodes into ChatMessage objects
             relevant_chat_history = []
             for entry in episodes:
@@ -113,16 +104,15 @@ class EpisodicAgent:
             full_msg = " ".join([m.content for m in relevant_chat_history]) + " " + user_msg
             self.query_input_tokens = count_tokens(full_msg)
 
-            # Runs the agent with the user message and relevant memory episodes
-            response = await self.agent.run(user_msg = user_msg, chat_history = relevant_chat_history)
+            context_text = "\n".join([f"{m.role.capitalize()}: {m.content}" for m in relevant_chat_history])
+            prompt = (
+                f"User: {user_msg}\n"
+                f"Known context (may be empty):\n{context_text}\n\n"
+                "Assistant:"
+            )
 
-            # Stores output into agent_text
-            if isinstance(response, AgentOutput):
-                output_text = response.response.content
-            elif isinstance(response, ChatMessage):
-                output_text = response.content
-            else:
-                output_text = str(response)
+            completion = await self.llm.acomplete(prompt)
+            output_text = completion.text.strip()
 
             self.query_output_tokens = count_tokens(output_text)
             self.query_time = time.time() - initial_query_time      # Compute elapsed time for this question
@@ -156,10 +146,6 @@ class EpisodicAgent:
                     relevant_memories.append(current_entry) # Adds current dictionary (complete memory episode) to dictionary
 
         return relevant_memories
-
-    def get_all_memories(self):
-        """Return all stored episodic memories."""
-        return self.memory_block.get_all_memories()
 
     def reset_memories(self):
         """Clear episodic memory."""
@@ -370,16 +356,16 @@ async def main():
 if __name__ == "__main__":
 
     #   For running test cases, use this:
-    asyncio.run(main())
+    # asyncio.run(main())
 
     #   For running the agent with human input, use this:
-    # agent = EpisodicAgent()
-    #
-    # user_input = input("Enter your input: ")
-    # while user_input.strip() != "":
-    #     reply = asyncio.run(agent.achat(user_input))
-    #     print(f"Agent Response: {reply.response_str}")
-    #     user_input = input("Enter your input: ")
-    #
-    # print("Thank you for chatting with me!")
-    # agent.reset_memories()
+    agent = EpisodicAgent()
+
+    user_input = input("Enter your input: ")
+    while user_input.strip() != "":
+        reply = asyncio.run(agent.achat(user_input))
+        print(f"Agent Response: {reply.response_str}")
+        user_input = input("Enter your input: ")
+
+    print("Thank you for chatting with me!")
+    agent.reset_memories()
