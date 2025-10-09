@@ -20,157 +20,49 @@
 #               - Grouped inputs for PropositionalExtractionMemory by session to reduce LLM-calls and to store information in context of the overall conversation
 #               - Brought down eval runtime from ~18 mins for 1 question to ~8 mins for 500 questions (Dataset: longmemeval_m.json, CondensedMemoryBlock)
 #               - Modified dataset path-locator to be more general
-#               - Saved results for each question to JSON file once acquired, instead of at the end, for safe record keeping
+#               - Saved results for each question to JSON file once acquired instead of at the end, safer record keeping
 #               - Added functionality to save token metrics to a JSON file after runtime
 #
 # Date:
 #   Created:    August 3, 2025  (Varenya Garg)
 #   Modified:   August 22, 2025 (Oliver Hsu)
-#   Modified:   September 21, 2025 (Eric Vincent Fernandes)
+#   Modified:   October 5, 2025 (Eric Vincent Fernandes)
 #############################################################################
 
 import asyncio
 import json
 import os
+import random
 import time
 import traceback
-from typing import List, Optional
+from typing import List
 
 from llama_index.core.base.llms.types import ChatMessage
-from llama_index.core.llms import LLM
-from llama_index.llms.gemini import Gemini
-from llama_index.embeddings.gemini import GeminiEmbedding
 
 from asdrp.agent.summary_agent import SummaryAgent
 from asdrp.agent.reductive_agent import ReductiveAgent
-# from asdrp.agent.episodic_agent import EpisodicAgent
+from asdrp.agent.episodic_agent import EpisodicAgent
 from asdrp.agent.hvm_agent import HVMAgent
+from google.genai.errors import ClientError
 
-# Import the OpenAI RateLimitError to detect rate-limit exceptions
+# Import Gemini RateLimitError to detect rate-limit exceptions
 try:
-    from openai.error import RateLimitError
+    from google.generativeai.errors import RateLimitError
 except ImportError:
-    # Fallback definition in case openai package is not available
+    # Fallback definition in case google.generativeai package is not available
     class RateLimitError(Exception):
-        """Fallback RateLimitError used when openai.error isn't importable at analysis time."""
+        """Fallback RateLimitError used when generativeai.error isn't importable at analysis time."""
         pass
 
-# LLM Factory Functions
-def create_llm(
-    provider: str = "gemini",
-    model: str = None,
-    api_key: Optional[str] = None,
-    **kwargs
-) -> LLM:
-    """
-    Create an LLM instance based on the provider.
-    
-    Args:
-        provider: LLM provider (only "gemini" supported in this version)
-        model: Model name (if None, uses default for provider)
-        api_key: API key (if None, uses environment variable)
-        **kwargs: Additional arguments for the LLM
-    
-    Returns:
-        LLM instance
-    """
-    
-    if provider.lower() == "gemini":
-        if model is None:
-            model = "models/gemini-2.5-flash-lite"
-        
-        if not os.getenv("GOOGLE_API_KEY"):
-            raise ValueError("GOOGLE_API_KEY not found in environment variables")
-        
-        return Gemini(model=model, **kwargs)
-    
-    else:
-        raise ValueError(f"Unsupported provider: {provider}. Only 'gemini' is supported in this version.")
-
-
-def create_embedding_model(
-    provider: str = "gemini",
-    model: str = None,
-    api_key: Optional[str] = None,
-    **kwargs
-):
-    """
-    Create an embedding model instance based on the provider.
-    
-    Args:
-        provider: Embedding provider (only "gemini" supported in this version)
-        model: Model name (if None, uses default for provider)
-        api_key: API key (if None, uses environment variable)
-        **kwargs: Additional arguments for the embedding model
-    
-    Returns:
-        Embedding model instance
-    """
-    
-    if provider.lower() == "gemini":
-        if model is None:
-            model = "models/embedding-001"
-        
-        # Gemini 不需要显式传递 api_key，它自动从环境变量 GOOGLE_API_KEY 读取
-        if not os.getenv("GOOGLE_API_KEY"):
-            raise ValueError("GOOGLE_API_KEY not found in environment variables")
-        
-        return GeminiEmbedding(model=model, **kwargs)
-    
-    else:
-        raise ValueError(f"Unsupported provider: {provider}. Only 'gemini' is supported in this version.")
-
-
-# Gemini cost calculation function
-def get_cost_per_1k_tokens(provider: str, model: str, token_type: str = "input") -> float:
-    """
-    Get cost per 1000 tokens for a given provider and model.
-    
-    Args:
-        provider: LLM provider ("openai" or "gemini")
-        model: Model name
-        token_type: "input" or "output"
-    
-    Returns:
-        Cost per 1000 tokens in USD
-    """
-    
-    # OpenAI pricing (as of 2024)
-    openai_pricing = {
-        "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015},
-        "gpt-4": {"input": 0.03, "output": 0.06},
-        "gpt-4-turbo": {"input": 0.01, "output": 0.03},
-        "gpt-4o": {"input": 0.005, "output": 0.015},
-        "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
-        "o4-mini": {"input": 0.00005, "output": 0.0004},  # Custom pricing from your code
-        "text-embedding-3-small": {"input": 0.00002, "output": 0.0},
-    }
-    
-    # Gemini pricing (as of 2024)
-    gemini_pricing = {
-        "models/gemini-2.5-flash-lite": {"input": 0.000075, "output": 0.0003},  # 使用与1.5-flash相同的定价
-        "models/gemini-1.5-flash": {"input": 0.000075, "output": 0.0003},
-        "models/gemini-1.5-pro": {"input": 0.00125, "output": 0.005},
-        "models/gemini-1.0-pro": {"input": 0.0005, "output": 0.0015},
-        "models/embedding-001": {"input": 0.000025, "output": 0.0},
-    }
-    
-    if provider.lower() == "openai":
-        pricing = openai_pricing.get(model, {"input": 0.0005, "output": 0.0015})  # Default fallback
-    elif provider.lower() == "gemini":
-        pricing = gemini_pricing.get(model, {"input": 0.000075, "output": 0.0003})  # Default fallback
-    else:
-        raise ValueError(f"Unsupported provider: {provider}")
-    
-    return pricing.get(token_type, 0.0)
-
-# Default cost constants (will be overridden based on actual model)
-INPUT_COST_PER_1K = 0.00005  # Cost per 1000 input tokens ($)    [$0.05 * (1000/1000000)]
+# Constants to compute approximate cost for API usage (gemini-2.5-flash-lite)
+INPUT_COST_PER_1K = 0.00010  # Cost per 1000 input tokens ($)    [$0.10 * (1000/1000000)]
 OUTPUT_COST_PER_1K = 0.00040  # Cost per 1000 output tokens ($)   [$0.40 * (1000/1000000)]
 
 # Retry configuration for rate-limit handling
-RETRY_ATTEMPTS = 5      # Maximum number of retry attempts on RateLimitError
-RETRY_BASE_DELAY = 10  # Base seconds for exponential backoff between retries
+RETRY_ATTEMPTS = 8      # Maximum number of retry attempts on errors
+RETRY_BASE_DELAY = 1.5   # Base seconds for exponential backoff between retries
+RETRY_MAX_DELAY = 20     # Max seconds for exponential backoff between retries
+# RETRY_BASE_DELAY = 10  # Base seconds for exponential backoff between retries
 
 
 async def write_results_to_file(output_file, results, append=False):
@@ -214,7 +106,7 @@ def load_completed_ids(output_file):
     return completed
 
 
-async def load_chat_history(agent_object, haystack_sessions):
+async def load_chat_history(agent_object, haystack_sessions, haystack_session_ids=None, question_id=None):
     """
     Replay chat history into the agent's memory block.
     Each session contains turns of user and assistant messages.
@@ -224,21 +116,22 @@ async def load_chat_history(agent_object, haystack_sessions):
         haystack_sessions (list[list[dict]]): List of chat sessions
     """
 
-    print(f"\nProcessing {len(haystack_sessions)} haystack sessions...")
+    total_sessions = len(haystack_sessions)
+    print(f"Processing {total_sessions} haystack sessions...")
 
     memory_block = agent_object.memory_block
-    can_batch = isinstance(agent_object, ReductiveAgent)    # ReductiveAgent can accept batched user-assistant pairs without its quality being negatively affected
-    
-    # Reset token tracking for this load operation
-    memory_block.input_tokens = 0
-    memory_block.output_tokens = 0
-    start_time = time.time()
+    # Enable batching for both ReductiveAgent and HVMAgent to reduce insert/summarization frequency
+    try:
+        from asdrp.agent.hvm_agent import HVMAgent as _HVMAgentType
+        can_batch = isinstance(agent_object, (ReductiveAgent, _HVMAgentType))
+    except Exception:
+        can_batch = isinstance(agent_object, ReductiveAgent)
 
     session_count = 0
     for session in haystack_sessions:
         session_count += 1
         if session_count % 5 == 0:  # Print progress every 5 sessions
-            print(f"Processed {session_count}/{len(haystack_sessions)} sessions...")
+            print(f"[Q:{question_id or 'unknown'}] processed {session_count}/{total_sessions} sessions...")
 
         msg = None                      # Content from either user or assistance
         pending_user = None             # Temporary storage to ensure user and assistant content is added together
@@ -260,11 +153,10 @@ async def load_chat_history(agent_object, haystack_sessions):
 
                 # Every pair is 2 messages; flush when we reach batch_pairs pairs
                 if len(buffer) >= 2 * batch_pairs:
-                    try:
-                        await memory_block._aput(buffer)    # IMPORTANT: memory_block variable name is constant across agents
-                    except Exception as e:
-                        print(f"Error processing buffered turns: {e}")
-                        traceback.print_exc()
+                    sid = haystack_session_ids[session_count - 1] if haystack_session_ids is not None else None
+                    print(f"[Q:{question_id or 'unknown'}] enqueue session {session_count}/{total_sessions} ({sid or 'no-id'})")
+                    meta = {"session_id": sid, "question_id": question_id} if sid or question_id else None
+                    await _retry_aput(memory_block, buffer, meta=meta)
                     buffer = []
 
             else:   # Ensures only user-assistant pairs are sent
@@ -273,11 +165,9 @@ async def load_chat_history(agent_object, haystack_sessions):
                 else:
                     if pending_user is None:
                         continue
-                    try:
-                        await memory_block._aput([pending_user, msg])   # IMPORTANT: memory_block variable name is constant across agents
-                    except Exception as e:
-                        print(f"Error processing turn pair: {e}")
-                        traceback.print_exc()
+                    sid = haystack_session_ids[session_count - 1] if haystack_session_ids is not None else None
+                    meta = {"session_id": sid, "question_id": question_id} if sid or question_id else None
+                    await _retry_aput(memory_block, [pending_user, msg], meta=meta)
 
                     # Reset temporary variables for next user-assistant pair
                     pending_user = None
@@ -285,15 +175,67 @@ async def load_chat_history(agent_object, haystack_sessions):
 
         # End of session: flush any leftover buffered pairs for batched memory blocks
         if can_batch and buffer:
-            try:
-                await memory_block._aput(buffer)   # IMPORTANT: memory_block variable name is constant across agents
-            except Exception as e:
-                print(f"Error processing last buffered turns for session: {e}")
-                traceback.print_exc()
-    
-    # Set the total time for loading chat history
-    memory_block.load_chat_history_time = time.time() - start_time
+            sid = haystack_session_ids[session_count - 1] if haystack_session_ids is not None else None
+            print(f"[Q:{question_id or 'unknown'}] enqueue session {session_count}/{total_sessions} ({sid or 'no-id'})")
+            meta = {"session_id": sid, "question_id": question_id} if sid or question_id else None
+            await _retry_aput(memory_block, buffer, meta=meta)
 
+async def _retry_aput(memory_block, buffer, meta=None):
+    last_exc = None
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            await memory_block._aput(buffer, meta=meta)
+            last_exc = None
+            break
+        except ClientError as e:   # <-- explicitly catch Gemini API errors
+            print(f"ClientError caught (attempt {attempt}): {e}")
+            last_exc = e
+            if getattr(e, "status", None) in [502, 503, 504]:
+                delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
+                delay *= random.uniform(0.8, 1.2)    # add ±20% jitter
+                print(f"Transient server error {e.status}, backing off {delay}s...")
+                await asyncio.sleep(delay)
+                continue
+            raise
+
+        except RuntimeError as e:
+            # specifically catch Gemini’s “Response was terminated early: MAX_TOKENS”
+            print(f"Gemini hit content issue (attempt {attempt}): {e}")
+            last_exc = e
+            if "MAX_TOKENS" in str(e) or "PROHIBITED_CONTENT" in str(e):
+                # delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY - 5)
+                delay = delay * random.uniform(0.8, 1.2)    # add ±20% jitter
+                print(f"Backing off {delay}s before retry...")
+                await asyncio.sleep(delay)
+                continue
+            raise  # different RuntimeError
+
+        except ValueError as e:
+            print(f"No candidates detected (attempt {attempt}): {e}")
+            last_exc = e
+            if "no candidates" in str(e):
+                delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY + 10)
+                delay = delay * random.uniform(0.8, 1.2)  # add ±20% jitter
+                print(f"Backing off {delay}s before retry...")
+                await asyncio.sleep(delay)
+                continue
+            raise  # different RuntimeError
+
+        except Exception as e:
+            print(f"Error processing buffered turns (attempt {attempt}): {e}")
+            traceback.print_exc()
+            last_exc = e
+            if "Rate limit" in str(e) or "429" in str(e):
+                # delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
+                delay = delay * random.uniform(0.8, 1.2)    # add ±20% jitter
+                print(f"RateLimit detected, backing off {delay}s before retry...")
+                await asyncio.sleep(delay)
+                continue
+            raise
+    if last_exc is not None:
+        raise last_exc
 
 def reset_memory(agent_object):
     """
@@ -321,7 +263,7 @@ class LongMemEvalRunner:
         # ==============================================================================================================
         # !!! IMPORTANT: CHANGE LIMIT AS NEEDED !!!
         # ==============================================================================================================
-        self.semaphore = asyncio.Semaphore(50)   # Limits number of questions processed at a time
+        self.semaphore = asyncio.Semaphore(30)   # Limits number of questions processed at a time
 
     async def process_question(self, question, question_num):
         """
@@ -342,24 +284,46 @@ class LongMemEvalRunner:
         print(f"Number of haystack sessions: {len(question.get('haystack_sessions', []))}")
 
         # Reset agent memory for this question
-        agent_object = create_agent(self.agent)
+        # Create agent instance; for HVMAgent, use collapsed mode and per-question collection/persist dir
+        try:
+            from asdrp.agent.hvm_agent import HVMAgent as _HVMAgentType
+            if self.agent is _HVMAgentType:
+                qid = question.get('question_id') or f"q_{question_num}"
+                # Determine per-question persist dir and whether to reset (reset only on first run when no persisted tree)
+                q_persist_dir = os.path.join("storage", "hvm_tree", qid)
+                need_files = ["docstore.json", "index_store.json"]
+                has_persist = os.path.isdir(q_persist_dir) and all(os.path.exists(os.path.join(q_persist_dir, n)) for n in need_files)
+
+                agent_object = create_agent(
+                    self.agent,
+                    retrieval_mode="collapsed",
+                    collection=f"agent_mem_hvm_{qid}",
+                    persist_dir=q_persist_dir,
+                    reset_collection_on_init=not has_persist,
+                )
+            else:
+                agent_object = create_agent(self.agent)
+        except Exception:
+            agent_object = create_agent(self.agent)
         print("Memory reset, processing chat history...")
 
         lch_time = lch_input_tokens = lch_output_tokens = lch_cost = 0          # Initializes variables associated with data around loading the chat history into the memory block
         query_time = query_input_tokens = query_output_tokens = query_cost = 0  # Initializes variables associated with data around the agent's query
 
         try:
-            # Replay all haystack sessions into memory
-            await load_chat_history(agent_object, question['haystack_sessions'])
+            # Replay all haystack sessions into memory (pass stable IDs if available)
+            await load_chat_history(
+                agent_object,
+                question['haystack_sessions'],
+                question.get('haystack_session_ids'),
+                question.get('question_id')
+            )
 
             lch_input_tokens = agent_object.memory_block.input_tokens       # Number of tokens sent to the memory block (haystack_sessions)
             lch_output_tokens = agent_object.memory_block.output_tokens     # Number of tokens returned by the LLM response while parsing haystack_sessions
             lch_time = agent_object.memory_block.load_chat_history_time     # Duration of time the LLM took to parse the haystack_sessions
 
-            # Calculate cost based on actual model
-            input_cost_per_1k = get_cost_per_1k_tokens(agent_object.provider, agent_object.model, "input")
-            output_cost_per_1k = get_cost_per_1k_tokens(agent_object.provider, agent_object.model, "output")
-            lch_cost = (lch_input_tokens / 1000.0) * input_cost_per_1k + (lch_output_tokens / 1000.0) * output_cost_per_1k
+            lch_cost = (lch_input_tokens / 1000.0) * INPUT_COST_PER_1K + (lch_output_tokens / 1000.0) * OUTPUT_COST_PER_1K  # Calculates real-world cost
 
             # Retry mechanism for rate-limit errors
             last_exc = None
@@ -367,18 +331,31 @@ class LongMemEvalRunner:
             for attempt in range(1, RETRY_ATTEMPTS + 1):
                 try:
                     response = await agent_object.achat(question['question'])
+
+                    if not hasattr(response, "response_str") or not response.response_str:
+                        raise ValueError("Response has no candidates")  # Explicitly retry if response empty
+
                     answer_text = response.response_str
                     print(f"Got response: {answer_text[:100]}...")  # Show first 100 chars
                     last_exc = None
                     break
+                except ValueError as e:
+                    if "no candidates" in str(e):
+                        delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY + 10)
+                        delay *= random.uniform(0.8, 1.2)
+                        print(f"No candidates, backing off {delay}s before retry...")
+                        await asyncio.sleep(delay)
+                        last_exc = e
+                        continue
+                    raise
+                except RateLimitError as e:
+                    last_exc = e
+                    delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY - 5)
+                    print(f"RateLimitError attempt {attempt}/{RETRY_ATTEMPTS}: {e}. Backing off {delay}s...")
+                    await asyncio.sleep(delay)
+                    continue
                 except Exception as e:
                     print(f"[DEBUG] Exception type={type(e)} message={e}")
-                    if "Rate limit" in str(e) or "429" in str(e):
-                        last_exc = e
-                        delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
-                        print(f"RateLimitError attempt {attempt}/{RETRY_ATTEMPTS}: {e}. Backing off {delay}s...")
-                        await asyncio.sleep(delay)
-                        continue
                     raise
 
             if last_exc is not None and answer_text is None:    # Still failing rate-limit after retries
@@ -387,7 +364,7 @@ class LongMemEvalRunner:
             query_input_tokens = agent_object.query_input_tokens    # Number of tokens passed into the agent (Prompt)
             query_output_tokens = agent_object.query_output_tokens  # Number of tokens returned by the agent (Response)
             query_time = agent_object.query_time                    # Duration of time the agent took to respond
-            query_cost = (query_input_tokens / 1000.0) * input_cost_per_1k + (query_output_tokens / 1000.0) * output_cost_per_1k
+            query_cost = (query_input_tokens / 1000.0) * INPUT_COST_PER_1K + (query_output_tokens / 1000.0) * OUTPUT_COST_PER_1K    # Calculates real-world cost
 
         except Exception as e:
             print(f"Error processing question {question_num + 1}: {e}")
@@ -440,7 +417,7 @@ class LongMemEvalRunner:
             start = time.monotonic()
             await self.semaphore.acquire()      # No semaphore timeout
             waited = time.monotonic() - start
-            print(f"\n\nTask {i} acquired semaphore after waiting {waited:.1f}s")
+            print(f"Task {i} acquired semaphore after waiting {waited:.1f}s")
             acquired = True
 
         except asyncio.TimeoutError:
@@ -513,6 +490,15 @@ class LongMemEvalRunner:
                 except Exception:
                     pass
 
+    async def _delayed_worker(self, delay_s: float, item, i, output_file):
+        """Start a worker after an initial delay. Helps stagger in-batch launches."""
+        try:
+            if delay_s and delay_s > 0:
+                await asyncio.sleep(delay_s)
+        except Exception:
+            pass
+        return await self.process_question_worker(item, i, output_file)
+
     async def evaluate_on_dataset(self, data_file, output_file, num_questions, start_index=0):
         """
         Run evaluation on a dataset of questions in parallel, respecting semaphore limits.
@@ -555,18 +541,30 @@ class LongMemEvalRunner:
         # ==============================================================================================================
         # !!! IMPORTANT: SET BATCH SIZE SAME AS SEMAPHORE LIMIT !!!
         # ==============================================================================================================
-        batch_size = 50
+        batch_size = 30
 
         print(f"Running {batch_size} questions in parallel...")
 
         # Kick off workers in parallel in batches of batch_size
         for start in range(0, len(dataset), batch_size):
             batch = dataset[start:start + batch_size]
-            batch_results = await asyncio.gather(
-                *[self.process_question_worker(item, i, output_file)
-                  for i, item in enumerate(batch, start)]
-            )
+
+            # Stagger launches within the batch: ~1–2s between adjacent tasks
+            stagger_base = 1.5  # seconds
+            workers = []
+            for offset, (i, item) in enumerate(zip(range(start, start + len(batch)), batch)):
+                # accumulate delay so we don't blast all 30 at t=0
+                delay = stagger_base * offset * random.uniform(0.9, 1.1)
+                workers.append(self._delayed_worker(delay, item, i, output_file))
+
+            batch_results = await asyncio.gather(*workers)
             results.extend(batch_results)
+            # Optional: pause between batches to ease rate limits
+            try:
+                pause = 1.5 * random.uniform(0.9, 1.1)
+                await asyncio.sleep(pause)
+            except Exception:
+                pass
 
         total_memory_input_tokens = sum(r.get("memory_input_tokens", 0) for r in results)
         total_memory_output_tokens = sum(r.get("memory_output_tokens", 0) for r in results)
@@ -625,7 +623,7 @@ class LongMemEvalRunner:
         # ==============================================================================================================
         # !!! IMPORTANT: CHANGE SUMMARY FILE NAME AS NEEDED !!!
         # ==============================================================================================================
-        summary_file = os.path.join(os.path.dirname(output_file), "reductive_agent_performance_summary.json")
+        summary_file = os.path.join(os.path.dirname(output_file), "hvm_agent_performance_summary.json")
 
         # --- write summary to JSON file in the same folder as output_file ---
         with open(summary_file, "w") as f:
@@ -634,7 +632,7 @@ class LongMemEvalRunner:
         print(f"\nRun summary written to {os.path.abspath(summary_file)}")
 
 
-def create_agent(agent_class):
+def create_agent(agent_class, **kwargs):
     """
     Create a unique instance of the agent.
 
@@ -645,7 +643,7 @@ def create_agent(agent_class):
         agent_instance: Instantiated agent
     """
 
-    agent_instance = agent_class()
+    agent_instance = agent_class(**kwargs)
     return agent_instance
 
 
@@ -656,24 +654,19 @@ def main():
     """
 
     start_index = 0
-    num_questions = 2  # Test with only 2 questions
+    num_questions = 500
 
     # ==================================================================================================================
-    # !!! IMPORTANT: CHANGE AGENT AND PROVIDER AS NEEDED !!!
+    # !!! IMPORTANT: CHANGE AGENT AS NEEDED !!!
     # ==================================================================================================================
-    # Choose provider: "openai" or "gemini"
-    provider = "openai"  # Change to "gemini" to use Gemini API
-    
-    # Create agent with specified provider
-    agent_class = lambda: HVMAgent(provider=provider, model="o4-mini" if provider == "openai" else "models/gemini-2.5-flash-lite")
-    runner = LongMemEvalRunner(agent_class)
+    runner = LongMemEvalRunner(HVMAgent)
 
-    # Get the directory where this script lives
-    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # Resolve project root (one level above this file's directory)
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    PROJECT_ROOT = os.path.dirname(BASE_DIR)
 
-    # Build the full path to your JSON file (using test dataset)
-    data_file = os.path.join(BASE_DIR, "eval", "data", "custom_history", "longmemeval_test_500_haystacks.json")
-    print(data_file)
+    # Build the full path to your JSON file (top-level eval folder)
+    data_file = os.path.join(PROJECT_ROOT, "eval", "data", "custom_history", "longmemeval_m_sample5_20.json")
 
     # Example: check it exists before loading
     if not os.path.exists(data_file):
@@ -682,12 +675,10 @@ def main():
     # ==================================================================================================================
     # !!! IMPORTANT: CHANGE FILE NAME BASED ON AGENT !!!
     # ==================================================================================================================
-    output_file = "results/hvm_agent_500_haystacks_test_response.json"
+    output_file = "results/hvm_agent_responses.json"
 
-    # Ensure output directory exists
-    os.makedirs("results", exist_ok=True)
-
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    # Ensure output directory exists (match output_file path)
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
 
     # Run evaluation asynchronously
     asyncio.run(
