@@ -12,16 +12,86 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
+import time
 import uuid
 from typing import Any, Dict, List
 import re
 
 import qdrant_client
+import tiktoken
+from typing import Optional
 from llama_index.core import Document, StorageContext, Settings
 from llama_index.core.indices.tree import TreeIndex
-from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.llms.openai import OpenAI
+from llama_index.core.llms import LLM
+from llama_index.llms.gemini import Gemini
+from llama_index.embeddings.gemini import GeminiEmbedding
 from llama_index.vector_stores.qdrant import QdrantVectorStore
+
+
+def create_llm(
+    provider: str = "gemini",
+    model: str = None,
+    api_key: Optional[str] = None,
+    **kwargs
+) -> LLM:
+    """
+    Create an LLM instance based on the provider.
+    
+    Args:
+        provider: LLM provider (only "gemini" supported in this version)
+        model: Model name (if None, uses default for provider)
+        api_key: API key (if None, uses environment variable)
+        **kwargs: Additional arguments for the LLM
+    
+    Returns:
+        LLM instance
+    """
+    
+    if provider.lower() == "gemini":
+        if model is None:
+            model = "models/gemini-2.5-flash-lite" 
+
+        if not os.getenv("GOOGLE_API_KEY"):
+            raise ValueError("GOOGLE_API_KEY not found in environment variables")
+        
+        return Gemini(model=model, **kwargs)
+    
+    else:
+        raise ValueError(f"Unsupported provider: {provider}. Only 'gemini' is supported in this version.")
+
+
+def create_embedding_model(
+    provider: str = "gemini",
+    model: str = None,
+    api_key: Optional[str] = None,
+    **kwargs
+):
+    """
+    Create an embedding model instance based on the provider.
+    
+    Args:
+        provider: Embedding provider (only "gemini" supported in this version)
+        model: Model name (if None, uses default for provider)
+        api_key: API key (if None, uses environment variable)
+        **kwargs: Additional arguments for the embedding model
+    
+    Returns:
+        Embedding model instance
+    """
+    
+    if provider.lower() == "gemini":
+        if model is None:
+            model = "models/embedding-001"
+        
+        # Gemini 不需要显式传递 api_key，它自动从环境变量 GOOGLE_API_KEY 读取
+        if not os.getenv("GOOGLE_API_KEY"):
+            raise ValueError("GOOGLE_API_KEY not found in environment variables")
+        
+        return GeminiEmbedding(model=model, **kwargs)
+    
+    else:
+        raise ValueError(f"Unsupported provider: {provider}. Only 'gemini' is supported in this version.")
 
 
 class HierarchicalVectorMemory:
@@ -36,6 +106,8 @@ class HierarchicalVectorMemory:
         mode: str = "tree_traversal",  # or "collapsed"
         host: str = "localhost",
         port: int = 6333,
+        provider: str = "openai",
+        model: str = "o4-mini",
     ) -> None:
         
         # Connect to the Qdrant collection
@@ -44,9 +116,9 @@ class HierarchicalVectorMemory:
             client=self._client, collection_name=collection
         )
 
-        # Configure global LlamaIndex settings
-        Settings.llm = OpenAI(model="o4-mini")
-        Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small")
+        # Configure global LlamaIndex settings using factory
+        Settings.llm = create_llm(provider=provider, model=model)
+        Settings.embed_model = create_embedding_model(provider=provider)
 
         # Storage context glues the vector store to the index
         self._storage_ctx = StorageContext.from_defaults(vector_store=self._vector_store)
@@ -56,10 +128,36 @@ class HierarchicalVectorMemory:
 
         self._sim_top_k = similarity_top_k
         self._mode = mode
+        
+        # Token tracking for cost calculation
+        self.input_tokens: int = 0
+        self.output_tokens: int = 0
+        self.load_chat_history_time: float = 0.0
+        self.tokenizer = tiktoken.get_encoding("o200k_base")
 
 
-    def _aput(self, text: str, meta: Dict[str, Any] | None = None) -> None:
+    async def _aput(self, messages, meta: Dict[str, Any] | None = None) -> None:
         """Insert the new turn as a leaf node."""
+        
+        # Handle both string and ChatMessage list inputs for compatibility
+        if isinstance(messages, str):
+            text = messages
+        elif isinstance(messages, list):
+            # Convert ChatMessage objects to string format
+            text_parts = []
+            for msg in messages:
+                if hasattr(msg, 'content'):
+                    role = getattr(msg, 'role', 'unknown')
+                    content = msg.content
+                    text_parts.append(f"{role.upper()}: {content}")
+                else:
+                    text_parts.append(str(msg))
+            text = "\n".join(text_parts)
+        else:
+            text = str(messages)
+
+        # Count tokens for this text
+        self.input_tokens += len(self.tokenizer.encode(text))
 
         meta = meta or {}
         meta.update({
@@ -81,6 +179,40 @@ class HierarchicalVectorMemory:
         nodes = qe.retrieve(query)
         return [n.node.text for n in nodes]
 
+
+    def clear_memory(self) -> None:
+        """Clear all memory from the Qdrant collection and reset the tree index."""
+        try:
+            # Delete the entire collection from Qdrant
+            self._client.delete_collection(collection_name=self._vector_store.collection_name)
+            print(f"✅ Cleared Qdrant collection: {self._vector_store.collection_name}")
+            
+            # Recreate the collection and vector store
+            self._vector_store = QdrantVectorStore(
+                client=self._client, collection_name=self._vector_store.collection_name
+            )
+            
+            # Recreate the storage context
+            self._storage_ctx = StorageContext.from_defaults(vector_store=self._vector_store)
+            
+            # Recreate the empty tree index
+            self._index = TreeIndex([], storage_context=self._storage_ctx, num_children=3, build_tree=True)
+            
+            print("✅ Memory cleared and tree index reset")
+            
+        except Exception as e:
+            print(f"❌ Error clearing memory: {e}")
+            # If collection doesn't exist, that's fine - just recreate it
+            try:
+                self._vector_store = QdrantVectorStore(
+                    client=self._client, collection_name=self._vector_store.collection_name
+                )
+                self._storage_ctx = StorageContext.from_defaults(vector_store=self._vector_store)
+                self._index = TreeIndex([], storage_context=self._storage_ctx, num_children=3, build_tree=True)
+                print("✅ Recreated empty memory structure")
+            except Exception as recreate_error:
+                print(f"❌ Error recreating memory structure: {recreate_error}")
+                raise
 
     def print_tree(self, max_chars: int = 80) -> None:
         """Helper function just for better formatting when testing"""
@@ -111,7 +243,7 @@ class HierarchicalVectorMemory:
 
 
         def _print(node, indent: int = 0):
-            spacer = "  " * indent  # alignment
+            spacer = "  " * indent  # alignment
             snippet = re.sub(r"\s+", " ", doc.text).strip()[:max_chars]
             print(f"{spacer}┣━━ {snippet}")
 

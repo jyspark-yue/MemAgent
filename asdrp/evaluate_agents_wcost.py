@@ -34,9 +34,12 @@ import json
 import os
 import time
 import traceback
-from typing import List
+from typing import List, Optional
 
 from llama_index.core.base.llms.types import ChatMessage
+from llama_index.core.llms import LLM
+from llama_index.llms.gemini import Gemini
+from llama_index.embeddings.gemini import GeminiEmbedding
 
 from asdrp.agent.summary_agent import SummaryAgent
 from asdrp.agent.reductive_agent import ReductiveAgent
@@ -52,7 +55,116 @@ except ImportError:
         """Fallback RateLimitError used when openai.error isn't importable at analysis time."""
         pass
 
-# Constants to compute approximate cost for API usage (gpt-5-nano)
+# LLM Factory Functions
+def create_llm(
+    provider: str = "gemini",
+    model: str = None,
+    api_key: Optional[str] = None,
+    **kwargs
+) -> LLM:
+    """
+    Create an LLM instance based on the provider.
+    
+    Args:
+        provider: LLM provider (only "gemini" supported in this version)
+        model: Model name (if None, uses default for provider)
+        api_key: API key (if None, uses environment variable)
+        **kwargs: Additional arguments for the LLM
+    
+    Returns:
+        LLM instance
+    """
+    
+    if provider.lower() == "gemini":
+        if model is None:
+            model = "models/gemini-2.5-flash-lite"
+        
+        if not os.getenv("GOOGLE_API_KEY"):
+            raise ValueError("GOOGLE_API_KEY not found in environment variables")
+        
+        return Gemini(model=model, **kwargs)
+    
+    else:
+        raise ValueError(f"Unsupported provider: {provider}. Only 'gemini' is supported in this version.")
+
+
+def create_embedding_model(
+    provider: str = "gemini",
+    model: str = None,
+    api_key: Optional[str] = None,
+    **kwargs
+):
+    """
+    Create an embedding model instance based on the provider.
+    
+    Args:
+        provider: Embedding provider (only "gemini" supported in this version)
+        model: Model name (if None, uses default for provider)
+        api_key: API key (if None, uses environment variable)
+        **kwargs: Additional arguments for the embedding model
+    
+    Returns:
+        Embedding model instance
+    """
+    
+    if provider.lower() == "gemini":
+        if model is None:
+            model = "models/embedding-001"
+        
+        # Gemini 不需要显式传递 api_key，它自动从环境变量 GOOGLE_API_KEY 读取
+        if not os.getenv("GOOGLE_API_KEY"):
+            raise ValueError("GOOGLE_API_KEY not found in environment variables")
+        
+        return GeminiEmbedding(model=model, **kwargs)
+    
+    else:
+        raise ValueError(f"Unsupported provider: {provider}. Only 'gemini' is supported in this version.")
+
+
+# Gemini cost calculation function
+def get_cost_per_1k_tokens(provider: str, model: str, token_type: str = "input") -> float:
+    """
+    Get cost per 1000 tokens for a given provider and model.
+    
+    Args:
+        provider: LLM provider ("openai" or "gemini")
+        model: Model name
+        token_type: "input" or "output"
+    
+    Returns:
+        Cost per 1000 tokens in USD
+    """
+    
+    # OpenAI pricing (as of 2024)
+    openai_pricing = {
+        "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015},
+        "gpt-4": {"input": 0.03, "output": 0.06},
+        "gpt-4-turbo": {"input": 0.01, "output": 0.03},
+        "gpt-4o": {"input": 0.005, "output": 0.015},
+        "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
+        "o4-mini": {"input": 0.00005, "output": 0.0004},  # Custom pricing from your code
+        "text-embedding-3-small": {"input": 0.00002, "output": 0.0},
+    }
+    
+    # Gemini pricing (as of 2024)
+    gemini_pricing = {
+        "models/gemini-2.5-flash-lite": {"input": 0.000075, "output": 0.0003},  # 使用与1.5-flash相同的定价
+        "models/gemini-1.5-flash": {"input": 0.000075, "output": 0.0003},
+        "models/gemini-1.5-pro": {"input": 0.00125, "output": 0.005},
+        "models/gemini-1.0-pro": {"input": 0.0005, "output": 0.0015},
+        "models/embedding-001": {"input": 0.000025, "output": 0.0},
+    }
+    
+    if provider.lower() == "openai":
+        pricing = openai_pricing.get(model, {"input": 0.0005, "output": 0.0015})  # Default fallback
+    elif provider.lower() == "gemini":
+        pricing = gemini_pricing.get(model, {"input": 0.000075, "output": 0.0003})  # Default fallback
+    else:
+        raise ValueError(f"Unsupported provider: {provider}")
+    
+    return pricing.get(token_type, 0.0)
+
+# Default cost constants (will be overridden based on actual model)
 INPUT_COST_PER_1K = 0.00005  # Cost per 1000 input tokens ($)    [$0.05 * (1000/1000000)]
 OUTPUT_COST_PER_1K = 0.00040  # Cost per 1000 output tokens ($)   [$0.40 * (1000/1000000)]
 
@@ -116,6 +228,11 @@ async def load_chat_history(agent_object, haystack_sessions):
 
     memory_block = agent_object.memory_block
     can_batch = isinstance(agent_object, ReductiveAgent)    # ReductiveAgent can accept batched user-assistant pairs without its quality being negatively affected
+    
+    # Reset token tracking for this load operation
+    memory_block.input_tokens = 0
+    memory_block.output_tokens = 0
+    start_time = time.time()
 
     session_count = 0
     for session in haystack_sessions:
@@ -173,6 +290,9 @@ async def load_chat_history(agent_object, haystack_sessions):
             except Exception as e:
                 print(f"Error processing last buffered turns for session: {e}")
                 traceback.print_exc()
+    
+    # Set the total time for loading chat history
+    memory_block.load_chat_history_time = time.time() - start_time
 
 
 def reset_memory(agent_object):
@@ -236,7 +356,10 @@ class LongMemEvalRunner:
             lch_output_tokens = agent_object.memory_block.output_tokens     # Number of tokens returned by the LLM response while parsing haystack_sessions
             lch_time = agent_object.memory_block.load_chat_history_time     # Duration of time the LLM took to parse the haystack_sessions
 
-            lch_cost = (lch_input_tokens / 1000.0) * INPUT_COST_PER_1K + (lch_output_tokens / 1000.0) * OUTPUT_COST_PER_1K  # Calculates real-world cost
+            # Calculate cost based on actual model
+            input_cost_per_1k = get_cost_per_1k_tokens(agent_object.provider, agent_object.model, "input")
+            output_cost_per_1k = get_cost_per_1k_tokens(agent_object.provider, agent_object.model, "output")
+            lch_cost = (lch_input_tokens / 1000.0) * input_cost_per_1k + (lch_output_tokens / 1000.0) * output_cost_per_1k
 
             # Retry mechanism for rate-limit errors
             last_exc = None
@@ -264,7 +387,7 @@ class LongMemEvalRunner:
             query_input_tokens = agent_object.query_input_tokens    # Number of tokens passed into the agent (Prompt)
             query_output_tokens = agent_object.query_output_tokens  # Number of tokens returned by the agent (Response)
             query_time = agent_object.query_time                    # Duration of time the agent took to respond
-            query_cost = (query_input_tokens / 1000.0) * INPUT_COST_PER_1K + (query_output_tokens / 1000.0) * OUTPUT_COST_PER_1K    # Calculates real-world cost
+            query_cost = (query_input_tokens / 1000.0) * input_cost_per_1k + (query_output_tokens / 1000.0) * output_cost_per_1k
 
         except Exception as e:
             print(f"Error processing question {question_num + 1}: {e}")
@@ -533,18 +656,23 @@ def main():
     """
 
     start_index = 0
-    num_questions = 500
+    num_questions = 2  # Test with only 2 questions
 
     # ==================================================================================================================
-    # !!! IMPORTANT: CHANGE AGENT AS NEEDED !!!
+    # !!! IMPORTANT: CHANGE AGENT AND PROVIDER AS NEEDED !!!
     # ==================================================================================================================
-    runner = LongMemEvalRunner(HVMAgent)
+    # Choose provider: "openai" or "gemini"
+    provider = "openai"  # Change to "gemini" to use Gemini API
+    
+    # Create agent with specified provider
+    agent_class = lambda: HVMAgent(provider=provider, model="o4-mini" if provider == "openai" else "models/gemini-2.5-flash-lite")
+    runner = LongMemEvalRunner(agent_class)
 
     # Get the directory where this script lives
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    # Build the full path to your JSON file
-    data_file = os.path.join(BASE_DIR, "eval", "data", "custom_history", "longmemeval_m.json")
+    # Build the full path to your JSON file (using test dataset)
+    data_file = os.path.join(BASE_DIR, "eval", "data", "custom_history", "longmemeval_test_500_haystacks.json")
     print(data_file)
 
     # Example: check it exists before loading
@@ -554,7 +682,7 @@ def main():
     # ==================================================================================================================
     # !!! IMPORTANT: CHANGE FILE NAME BASED ON AGENT !!!
     # ==================================================================================================================
-    output_file = "results/hvm_agent_response.json"
+    output_file = "results/hvm_agent_500_haystacks_test_response.json"
 
     # Ensure output directory exists
     os.makedirs("results", exist_ok=True)
