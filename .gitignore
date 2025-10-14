@@ -167,5 +167,7 @@ dmypy.json
 
 .DS_Store
 .DS_Store/
+tmp/
+qdrant_storage/
 
 AlphaPose

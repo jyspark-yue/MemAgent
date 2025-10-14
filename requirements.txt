@@ -12,7 +12,7 @@ jiter==0.10.0
 joblib==1.5.1
 multidict==6.4.4
 nltk==3.9.1
-numpy==2.3.1
+numpy==2.2
 openai==1.90.0
 pydantic==2.11.7
 pydantic-core==2.33.2
@@ -61,7 +61,7 @@ tiktoken~=0.9.0
 aiosqlite~=0.21.0
 dirtyjson~=1.0.8
 wrapt~=1.17.2
-llama-index-core~=0.14.3
+llama-index-core>=0.14.3,<0.15
 dataclasses-json~=0.6.7
 beautifulsoup4~=4.13.4
 marshmallow~=3.26.1
@@ -97,3 +97,7 @@ pyasn1_modules~=0.4.2
 google-api-python-client~=2.184.0
 pydantic_core~=2.33.2
 mypy_extensions~=1.1.0
+llama-index-llms-google-genai
+llama-index-embeddings-google-genai
+qdrant-client==1.15.1
+llama-index-vector-stores-qdrant==0.8.6
