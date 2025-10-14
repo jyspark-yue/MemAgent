@@ -9,348 +9,1219 @@
 #############################################################################
 
 
+"""
+Adjusted from https://github.com/run-llama/llama_index/blob/main/llama-index-packs/llama-index-packs-raptor/llama_index/packs/raptor
+
+Full credits to the original authors!
+"""
+
+#
+# use qdrant docker image
+# docker pull qdrant/qdrant
+# start qdrant with persistence
+# docker run -p 6333:6333 -p 6334:6334 \
+#     -v "$(pwd)/qdrant_storage:/qdrant/storage:z" \
+#     qdrant/qdrant
+#
+
+# Standard Library Imports
 from __future__ import annotations
-
-import datetime as dt
-import asyncio
 import os
-import time
-import uuid
-from typing import Any, Dict, List
 import re
-import concurrent.futures
+import uuid
+import threading
+import asyncio
+import datetime as dt
+import random
+import warnings
+from enum import Enum
+from concurrent.futures import ThreadPoolExecutor
+from typing import (
+    Any,
+    Dict,
+    List,
+    Optional,
+    Callable,
+    Sequence,
+    Awaitable,
+    Union,
+)
 
-import tiktoken
-from typing import Optional
-from llama_index.core import Document, StorageContext, Settings
-from llama_index.core import load_index_from_storage
+
+# Environment Configuration
+warnings.filterwarnings("ignore", category=FutureWarning)
+
+
+
+# Math / ML / Data Libraries
+import numba
+import numpy as np
+import umap
+from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
+from sklearn.preprocessing import StandardScaler
+
+
+
+
+# LlamaIndex Core Components
+from llama_index.core import (
+    get_tokenizer,
+    Document,
+    StorageContext,
+    Settings,
+    VectorStoreIndex,
+    get_response_synthesizer,
+    load_index_from_storage,
+)
+from llama_index.core.schema import (
+    BaseNode,
+    NodeWithScore,
+    QueryBundle,
+    TextNode,
+    TransformComponent,
+)
+from llama_index.core.memory import BaseMemoryBlock
+from llama_index.core.embeddings import BaseEmbedding
+from llama_index.core.base.response.schema import Response
+from llama_index.core.base.base_retriever import BaseRetriever, QueryType
+from llama_index.core.bridge.pydantic import BaseModel, Field
+from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
+from llama_index.core.response_synthesizers import BaseSynthesizer
+from llama_index.core.vector_stores.types import (
+    MetadataFilter,
+    MetadataFilters,
+    BasePydanticVectorStore,
+)
+from llama_index.core.llama_pack.base import BaseLlamaPack
+from llama_index.core.llms.llm import LLM
+from llama_index.core.ingestion import run_transformations
+from llama_index.core.base.llms.types import ChatMessage
 from llama_index.core.indices.tree import TreeIndex
-from llama_index.core.llms import LLM
+
+# ===============================
+# 🤖 LlamaIndex LLMs & Embeddings
+# ===============================
 from llama_index.llms.google_genai import GoogleGenAI
+from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
+from llama_index.llms.openai import OpenAI
+from llama_index.embeddings.openai import OpenAIEmbedding
+
+# ===============================
+# ☁️ External APIs / SDKs
+# ===============================
+from google.genai import types
+from google.genai.types import EmbedContentConfig
 
 
-def create_llm(
-    provider: str = "gemini",
-    model: str = None,
-    api_key: Optional[str] = None,
-    **kwargs
+# Vector Store (Qdrant)
+import qdrant_client
+from qdrant_client import QdrantClient, AsyncQdrantClient
+from llama_index.vector_stores.qdrant import QdrantVectorStore
+
+
+DEFAULT_SUMMARY_PROMPT = (
+    "Summarize the provided text, including as many key details as needed."
+)
+
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+DEFAULT_QDRANT_PERSIST_DIR = os.environ.get(
+    "QDRANT_PERSIST_DIR", os.path.join(BASE_DIR, "qdrant_data")
+)
+
+
+if not os.path.exists(DEFAULT_QDRANT_PERSIST_DIR):
+    print(f"Creating Qdrant persistence directory at {DEFAULT_QDRANT_PERSIST_DIR}")
+    os.makedirs(DEFAULT_QDRANT_PERSIST_DIR)
+
+
+
+def create_default_llm(
+    callback_manager: CallbackManager = None,
+    model="gemini-2.5-flash-lite",
+    temperature: float = 0.2,
+    **kwargs,
 ) -> LLM:
-    """
-    Create an LLM instance based on the provider.
-    
-    Args:
-        provider: LLM provider (only "gemini" supported in this version)
-        model: Model name (if None, uses default for provider)
-        api_key: API key (if None, uses environment variable)
-        **kwargs: Additional arguments for the LLM
-    
-    Returns:
-        LLM instance
-    """
-    
-    if provider.lower() == "gemini":
-        if model is None:
-            model = "gemini-2.5-flash"  # According to LlamaIndex Google GenAI docs
-        
-        # Google GenAI reads API key from env var GOOGLE_API_KEY
-        if not os.getenv("GOOGLE_API_KEY"):
-            raise ValueError("GOOGLE_API_KEY not found in environment variables")
-        
-        return GoogleGenAI(model=model, **kwargs)
-    
-    else:
-        raise ValueError(f"Unsupported provider: {provider}. Only 'gemini' is supported in this version.")
+
+    if callback_manager is None:
+        callback_manager = CallbackManager(handlers=[TokenCountingHandler()])
+    _safety_settings = [
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+            # threshold=types.HarmBlockThreshold.OFF,
+            threshold=types.HarmBlockThreshold.BLOCK_NONE,
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+            # threshold=types.HarmBlockThreshold.OFF,
+            threshold=types.HarmBlockThreshold.BLOCK_NONE,
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+            # threshold=types.HarmBlockThreshold.OFF,
+            threshold=types.HarmBlockThreshold.BLOCK_NONE,
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            # threshold=types.HarmBlockThreshold.OFF,
+            threshold=types.HarmBlockThreshold.BLOCK_NONE,
+        ),
+    ]
+
+    _gen_cfg = types.GenerateContentConfig(
+        safety_settings=_safety_settings, temperature=temperature
+    )
+    llm = GoogleGenAI(
+        model=model,
+        temperature=temperature,
+        max_retries=100,
+        callback_manager=callback_manager,
+        generation_config=_gen_cfg,
+        **kwargs,
+    )
+    print("llm.callback_manager.handlers:", llm.callback_manager.handlers)
+    print("llm:", llm)
+    return llm
 
 
-def create_embedding_model(
-    provider: str = "gemini",
-    model: str = None,
-    api_key: Optional[str] = None,
-    **kwargs
+
+def create_default_embedding_model(
+    model_name: str = "text-embedding-004",
+    embed_batch_size: int = 100,
+    callback_manager: CallbackManager = None,
+    **kwargs,
 ):
     """
-    Create an embedding model instance based on the provider.
-    
-    Args:
-        provider: Embedding provider (only "gemini" supported in this version)
-        model: Model name (if None, uses default for provider)
-        api_key: API key (if None, uses environment variable)
-        **kwargs: Additional arguments for the embedding model
-    
-    Returns:
-        Embedding model instance
+    Create a default embedding model.
     """
-    
-    if provider.lower() == "gemini":
-        # Lazy import; only depend on embeddings when vector retrieval is enabled
-        try:
-            from llama_index.embeddings.google_genai import GoogleGenAIEmbedding as EmbeddingCls
-            default_embed_model = "text-embedding-004"
-        except Exception as e:
-            # Require the newer Google GenAI path; do not fallback to legacy GeminiEmbedding to avoid old deps
-            raise ImportError(
-                "GoogleGenAIEmbedding is not available in your llama_index version. "
-                "Please upgrade llama-index to a version that provides 'llama_index.embeddings.google_genai'."
-            ) from e
-
-        if model is None:
-            model = default_embed_model
-
-        if not os.getenv("GOOGLE_API_KEY"):
-            raise ValueError("GOOGLE_API_KEY not found in environment variables")
-
-        return EmbeddingCls(model=model, **kwargs)
-    
-    else:
-        raise ValueError(f"Unsupported provider: {provider}. Only 'gemini' is supported in this version.")
+    if callback_manager is None:
+        callback_manager = CallbackManager(handlers=[TokenCountingHandler()])
+    embed_model = GoogleGenAIEmbedding(
+        model_name=model_name,
+        embed_batch_size=embed_batch_size,
+        callback_manager=callback_manager,
+        **kwargs,
+    )
+    print(
+        "embed_model.callback_manager.handlers:", embed_model.callback_manager.handlers
+    )
+    print("embed_model:", embed_model)
+    return embed_model
 
 
-class HierarchicalVectorMemory:
-    """Long‑term memory that stores every turn as a leaf node.
-    TreeIndex automatically builds a hierarchy above the leaves.
-    Retrieval walks the hierarchy or uses the collapsed vector view, depending on `mode`."""
+
+class QueryModes(str, Enum):
+    """Query modes."""
+
+    tree_traversal = "tree_traversal"
+    collapsed = "collapsed"
+
+
+
+class SummaryModule(BaseModel):
+    response_synthesizer: BaseSynthesizer = Field(description="LLM")
+    summary_prompt: str = Field(
+        default=DEFAULT_SUMMARY_PROMPT,
+        description="Summary prompt.",
+    )
+    num_workers: int = Field(
+        default=4, description="Number of workers to generate summaries."
+    )
+    show_progress: bool = Field(default=True, description="Show progress.")
+
+    class Config:
+        arbitrary_types_allowed = True
 
     def __init__(
         self,
-        collection: str = "agent_mem_hvm",
-        similarity_top_k: int = 3,
-        mode: str = "tree_traversal",  # or "collapsed"
-        host: str = "localhost",
-        port: int = 6333,
-        provider: str = "gemini",
-        model: str = "gemini-2.5-flash",
-        persist_dir: Optional[str] = "storage/hvm_tree",
+        llm: Optional[LLM] = None,
+        summary_prompt: str = DEFAULT_SUMMARY_PROMPT,
+        num_workers: int = 4,
     ) -> None:
-        
-        self._sim_top_k = similarity_top_k
-        self._mode = mode
-
-        # Always set LLM
-        Settings.llm = create_llm(provider=provider, model=model)
-
-        self._client = None
-        self._vector_store = None
-
-        self._persist_dir = persist_dir
-
-        # Decide whether persisted files exist (first-run vs resume)
-        persist_ready = False
-        if self._persist_dir:
-            try:
-                os.makedirs(self._persist_dir, exist_ok=True)
-            except Exception:
-                pass
-            needed = ["docstore.json", "index_store.json"]
-            persist_ready = all(os.path.exists(os.path.join(self._persist_dir, n)) for n in needed)
-
-        # Storage context: only attach vector store and embeddings when using collapsed mode
-        if self._mode == "collapsed":
-            # Create embedding model and vector store lazily
-            Settings.embed_model = create_embedding_model(provider=provider)
-
-            # Lazy import qdrant deps to avoid hard dependency when not needed
-            import qdrant_client
-            from llama_index.vector_stores.qdrant import QdrantVectorStore
-
-            self._client = qdrant_client.QdrantClient(host=host, port=port)
-            self._vector_store = QdrantVectorStore(
-                client=self._client, collection_name=collection
-            )
-            if persist_ready:
-                self._storage_ctx = StorageContext.from_defaults(
-                    vector_store=self._vector_store,
-                    persist_dir=self._persist_dir,
-                )
-            else:
-                self._storage_ctx = StorageContext.from_defaults(
-                    vector_store=self._vector_store,
-                )
-        else:
-            # Tree traversal mode can work without embeddings/vector store
-            if persist_ready:
-                self._storage_ctx = StorageContext.from_defaults(
-                    persist_dir=self._persist_dir,
-                )
-            else:
-                self._storage_ctx = StorageContext.from_defaults()
-
-        # Load existing index if persisted, else create empty and build
-        index_loaded = False
-        if persist_ready:
-            try:
-                self._index = load_index_from_storage(self._storage_ctx)
-                index_loaded = True
-                print(f"Loaded persisted TreeIndex from {self._persist_dir}")
-            except Exception:
-                index_loaded = False
-
-        if not index_loaded:
-            # Empty tree index which grow with every `.store()` call
-            # Tune num_children to reduce merge depth; enable async building
-            lightweight_tree_llm = create_llm(provider=provider, model="gemini-2.5-flash")
-            self._index = TreeIndex(
-                [],
-                storage_context=self._storage_ctx,
-                num_children=10,
-                build_tree=True,
-                use_async=True,
-                llm=lightweight_tree_llm,
-            )
-            if self._persist_dir:
-                print(f"Initialized new TreeIndex (persist_dir={self._persist_dir or 'None'})")
-        
-        # Token tracking for cost calculation
-        self.input_tokens: int = 0
-        self.output_tokens: int = 0
-        self.load_chat_history_time: float = 0.0
-        self.tokenizer = tiktoken.get_encoding("o200k_base")
-
-
-    async def _aput(self, messages, meta: Dict[str, Any] | None = None) -> None:
-        """Insert the new turn as a leaf node."""
-        
-        # Handle both string and ChatMessage list inputs for compatibility
-        if isinstance(messages, str):
-            text = messages
-        elif isinstance(messages, list):
-            # Convert ChatMessage objects to string format
-            text_parts = []
-            for msg in messages:
-                if hasattr(msg, 'content'):
-                    role = getattr(msg, 'role', 'unknown')
-                    content = msg.content
-                    text_parts.append(f"{role.upper()}: {content}")
-                else:
-                    text_parts.append(str(msg))
-            text = "\n".join(text_parts)
-        else:
-            text = str(messages)
-
-        # Count tokens for this text
-        self.input_tokens += len(self.tokenizer.encode(text))
-
-        meta = meta or {}
-        session_id = meta.get("session_id")
-        meta.update({
-            "uuid": str(uuid.uuid4()),
-            "tstamp": dt.datetime.utcnow().isoformat(),
-        })
-
-        # If a stable session_id is provided, and already ingested, skip to prevent duplicates
-        if session_id:
-            try:
-                ref = self._storage_ctx.docstore.get_ref_doc_info(session_id)
-                if ref is not None:
-                    print(f"[HVM] Skip already ingested session_id={session_id}")
-                    return
-            except Exception:
-                pass
-
-        if session_id:
-            doc = Document(text=text, metadata=meta, doc_id=session_id)
-        else:
-            doc = Document(text=text, metadata=meta)
-        start_time = time.time()
-        # Run blocking TreeIndex.insert in a worker thread to avoid nested event loop issues
-        await asyncio.to_thread(self._index.insert, doc)
-        self.load_chat_history_time += time.time() - start_time
-        # Persist updated storage after insert to enable resume-on-restart
-        try:
-            if self._persist_dir:
-                self._storage_ctx.persist(persist_dir=self._persist_dir)
-                if session_id:
-                    print(f"[HVM] Persisted session_id={session_id} -> {self._persist_dir}")
-        except Exception:
-            pass
-
-
-    def _aget(self, query: str) -> List[str]:
-        """Similarity search that follows the hierarchical structure."""
-
-        qe = self._index.as_query_engine(
-            similarity_top_k=self._sim_top_k,
-            mode=self._mode,
+        response_synthesizer = get_response_synthesizer(
+            response_mode="tree_summarize", use_async=True, llm=llm
         )
-        nodes = qe.retrieve(query)
-        return [n.node.text for n in nodes]
+        super().__init__(
+            response_synthesizer=response_synthesizer,
+            summary_prompt=summary_prompt,
+            num_workers=num_workers,
+        )
+
+    async def generate_summaries(
+        self, documents_per_cluster: List[List[BaseNode]]
+    ) -> List[str]:
+        """
+        Generate summaries of documents per cluster.
+
+        Args:
+            documents_per_cluster (List[List[BaseNode]]): List of documents per cluster
+
+        Returns:
+            List[str]: List of summary for each cluster
+
+        """
+        jobs = []
+        total_docs = sum(len(documents) for documents in documents_per_cluster)
+        total_clusters = len(documents_per_cluster)
+        for documents in documents_per_cluster:
+            with_scores = [NodeWithScore(node=doc, score=1.0) for doc in documents]
+            jobs.append(
+                self.response_synthesizer.asynthesize(self.summary_prompt, with_scores)
+            )
+
+        lock = asyncio.Semaphore(self.num_workers)
+        responses = []
+
+        # run the jobs while limiting the number of concurrent jobs to num_workers
+        for job in jobs:
+            async with lock:
+                responses.append(await job)
+        print(
+            f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@LLM CALLED, generated {len(responses)} summaries. total docs: {total_docs}, total clusters: {total_clusters}"
+        )
+        print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@ responses:", responses)
+        return [str(response) for response in responses]
 
 
-    def clear_memory(self) -> None:
-        """Clear all memory and reset the tree index. If using Qdrant (collapsed mode), clear the collection; otherwise just rebuild in-memory index."""
-        if self._vector_store is not None and self._client is not None:
-            try:
-                # Delete the entire collection from Qdrant
-                collection_name = getattr(self._vector_store, "collection_name", None)
-                if collection_name:
-                    self._client.delete_collection(collection_name=collection_name)
-                    print(f"Cleared Qdrant collection: {collection_name}")
 
-                # Recreate vector store and storage context
-                from llama_index.vector_stores.qdrant import QdrantVectorStore
-                self._vector_store = QdrantVectorStore(
-                    client=self._client, collection_name=collection_name or "agent_mem_hvm"
+def create_summary_module(llm: Optional[LLM] = None) -> SummaryModule:
+    if llm is None:
+        llm = create_default_llm()
+    return SummaryModule(llm=llm)
+
+
+
+def create_qdrant_client(
+    qdrant_persist_dir: Optional[str] = DEFAULT_QDRANT_PERSIST_DIR,
+    host: str = "localhost",
+    port: int = 6333,
+) -> AsyncQdrantClient:
+    # prefer using host/port if available since it will provide better performance
+    try:
+        client = AsyncQdrantClient(host=host, port=port)
+    except Exception as e:
+        client = (
+            AsyncQdrantClient(path=qdrant_persist_dir)
+            if qdrant_persist_dir
+            else AsyncQdrantClient()
+        )
+    return client
+
+
+
+def create_vector_store(
+    client: AsyncQdrantClient,
+    collection_name: str = "agent_mem_hvm",
+) -> QdrantVectorStore:
+    vector_store = QdrantVectorStore(aclient=client, collection_name=collection_name)
+    return vector_store
+
+
+
+def create_vector_store_index(
+    vector_store: QdrantVectorStore,
+    embed_model: Optional[BaseEmbedding] = create_default_embedding_model(),
+    transformations: Optional[List[TransformComponent]] = None,
+) -> VectorStoreIndex:
+    index = VectorStoreIndex(
+        nodes=[],
+        use_async=True,
+        storage_context=StorageContext.from_defaults(vector_store=vector_store),
+        embed_model=embed_model,
+        transformations=transformations,
+        show_progress=True,
+    )
+    return index
+
+
+
+def create_hvm(
+    client: AsyncQdrantClient,
+    name: str = "hvm_memory",
+    collection_name: str = "hvm_memory_collection",
+    tree_depth: int = 3,
+    llm: Optional[LLM] = None,
+    embed_model: Optional[BaseEmbedding] = None,
+    transformations: Optional[List[TransformComponent]] = None,
+) -> HierarchicalVectorMemory:
+    if llm is None:
+        llm = create_default_llm()
+    summary_module = create_summary_module(llm=llm)
+    if embed_model is None:
+        embed_model = create_default_embedding_model()
+    vector_store = create_vector_store(client=client, collection_name=collection_name)
+    index = create_vector_store_index(
+        vector_store=vector_store,
+        embed_model=embed_model,
+        transformations=transformations,
+    )
+
+    return HierarchicalVectorMemory(
+        name=name,
+        tree_depth=tree_depth,
+        summary_module=summary_module,
+        index=index,
+        llm=llm,
+        embed_model=embed_model,
+    )
+
+
+
+class HierarchicalVectorMemory(BaseMemoryBlock[str]):
+    """Long‑term memory that stores every turn as a leaf node.
+    TreeIndex automatically builds a hierarchy above the leaves.
+    Retrieval walks the hierarchy or uses the collapsed vector view, depending on `mode`.
+    """
+
+    input_tokens: int = Field(
+        default=0,
+        description="The number of tokens passed into the LLM when loading the chat history.",
+    )
+    output_tokens: int = Field(
+        default=0,
+        description="The number of tokens returned by the LLM when loading the chat history.",
+    )
+
+    embed_tokens: int = Field(
+        default=0,
+        description="The number of tokens used for embeddings.",
+    )
+
+    load_chat_history_time: float = Field(
+        default=0.0,
+        description="The duration of time it took to load the chat history.",
+    )
+
+    retrieval_time: float = Field(
+        default=0.0,
+        description="The duration of time it took to retrieve the chat history.",
+    )
+
+    llm: LLM = Field(description="LLM")
+    embed_model: BaseEmbedding = Field(description="Embedding model")
+
+    message_history: List[ChatMessage] = Field(
+        default_factory=list, description="History of messages exchanged with the user."
+    )
+
+    tree_depth: int = Field(default=3, description="The depth of the tree.")
+    summary_module: SummaryModule = Field(
+        description="Module for summarizing clusters of nodes."
+    )
+    index: Optional[VectorStoreIndex] = Field(
+        default=None, description="The TreeIndex instance."
+    )
+
+    verbose: bool = Field(default=False, description="Verbose mode.")
+
+    def update_stats(self):
+        llm_handler = None
+        embed_handler = None
+        try:
+            llm_handlers = self.llm.callback_manager.handlers or []
+            llm_handler = next(
+                (h for h in llm_handlers if isinstance(h, TokenCountingHandler)), None
+            )
+            print(f"llm_handlers: {llm_handlers}")
+        except Exception as e:
+            llm_handler = None
+        try:
+            embed_handlers = self.embed_model.callback_manager.handlers or []
+            embed_handler = next(
+                (h for h in embed_handlers if isinstance(h, TokenCountingHandler)),
+                None,
+            )
+            print(f"embed_handlers: {embed_handlers}")
+        except Exception as e:
+            embed_handler = None
+        if llm_handler:
+            self.input_tokens = llm_handler.prompt_llm_token_count
+            self.output_tokens = llm_handler.completion_llm_token_count
+        if embed_handler:
+            self.embed_tokens = embed_handler.embedding_token_counts
+        print(
+            f"llm_handler: {llm_handler}, embed_handler: {embed_handler},llm: {self.llm}, embed_model: {self.embed_model}"
+        )
+        print(
+            f"HVM stats:\nInput tokens: {self.input_tokens}\nOutput tokens: {self.output_tokens}\nEmbed tokens: {self.embed_tokens}\nLoad time: {self.load_chat_history_time:.2f}s\nRetrieval time: {self.retrieval_time:.2f}s"
+        )
+
+    async def _get_embeddings_per_level(self, level: int = 0) -> List[float]:
+        """
+        Retrieve embeddings per level in the abstraction tree.
+
+        Args:
+            level (int, optional): Target level. Defaults to 0 which stands for leaf nodes.
+
+        Returns:
+            List[float]: List of embeddings
+
+        """
+        filters = MetadataFilters(filters=[MetadataFilter("level", level)])
+
+        # kind of janky, but should work with any vector index
+        source_nodes = await self.index.as_retriever(
+            similarity_top_k=10000, filters=filters
+        ).retrieve("retrieve")
+
+        return [x.node for x in source_nodes]
+
+    async def _aput(self, messages: Optional[List[ChatMessage]], **kwargs) -> None:
+        start_time = time.time()
+        if len(messages) == 0:
+            print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@ No messages to store in HVM.")
+            return
+        print(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@ Storing {len(messages)} in HVM.")
+        self.message_history.extend(messages)
+
+        def _chat_to_node(msg: ChatMessage) -> TextNode:
+            metadata = {
+                "role": msg.role,
+            }
+            return TextNode(
+                text=msg.content,
+                metadata=metadata,
+            )
+
+        documents: List[BaseNode] = (
+            [_chat_to_node(m) for m in messages] if messages else []
+        )
+        embed_model = self.index._embed_model
+        transformations = self.index._transformations
+
+        cur_nodes = run_transformations(documents, transformations, in_place=False)
+        for level in range(self.tree_depth):
+            # get the embeddings for the current documents
+
+            if self.verbose:
+                print(f"Generating embeddings for level {level}.")
+
+            embeddings = await embed_model.aget_text_embedding_batch(
+                [node.get_content(metadata_mode="embed") for node in cur_nodes]
+            )
+            assert len(embeddings) == len(cur_nodes)
+            id_to_embedding = {
+                node.id_: embedding for node, embedding in zip(cur_nodes, embeddings)
+            }
+
+            if self.verbose:
+                print(f"Performing clustering for level {level}.")
+
+            # cluster the documents
+            # nodes_per_cluster = get_clusters(cur_nodes, id_to_embedding)
+            nodes_per_cluster = await aget_clusters(
+                cur_nodes,
+                id_to_embedding,
+                # max_length_in_cluster=10000,
+                # reduction_dimension=10,
+                # threshold=0.1,
+            )
+
+            if self.verbose:
+                print(
+                    f"Generating summaries for level {level} with {len(nodes_per_cluster)} clusters."
                 )
-                self._storage_ctx = StorageContext.from_defaults(vector_store=self._vector_store)
-                self._index = TreeIndex([], storage_context=self._storage_ctx, num_children=3, build_tree=True)
-                print("Memory cleared and tree index reset")
-            except Exception as e:
-                print(f"Error clearing memory: {e}")
-                # Fallback to in-memory reset
-                self._storage_ctx = StorageContext.from_defaults()
-                self._index = TreeIndex([], storage_context=self._storage_ctx, num_children=3, build_tree=True)
-                print("Recreated empty in-memory structure")
+            summaries_per_cluster = await self.summary_module.generate_summaries(
+                nodes_per_cluster
+            )
+
+            if self.verbose:
+                print(
+                    f"Level {level} created summaries/clusters: {len(nodes_per_cluster)}"
+                )
+
+            # replace the current nodes with their summaries
+            new_nodes = [
+                TextNode(
+                    text=summary,
+                    metadata={"level": level},
+                    excluded_embed_metadata_keys=["level"],
+                    excluded_llm_metadata_keys=["level"],
+                )
+                for summary in summaries_per_cluster
+            ]
+
+            # insert the nodes with their embeddings and parent_id
+            nodes_with_embeddings = []
+            for cluster, summary_doc in zip(nodes_per_cluster, new_nodes):
+                for node in cluster:
+                    node.metadata["parent_id"] = summary_doc.id_
+                    node.excluded_embed_metadata_keys.append("parent_id")
+                    node.excluded_llm_metadata_keys.append("parent_id")
+                    node.embedding = id_to_embedding[node.id_]
+                    nodes_with_embeddings.append(node)
+            # print(f"Inserted {len(nodes_with_embeddings)} nodes into the index.")
+            print(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@ Inserting {len(nodes_with_embeddings)} nodes into the index at level {level}.{nodes_with_embeddings[0] if len(nodes_with_embeddings) > 0 else ''}")
+            await self.index.ainsert_nodes(nodes_with_embeddings)
+
+            # set the current nodes to the new nodes
+            cur_nodes = new_nodes
+
+        await self.index.ainsert_nodes(cur_nodes)
+        end_time = time.time()
+        self.load_chat_history_time += end_time - start_time
+        self.update_stats()
+
+    async def collapsed_retrieval(
+        self, query_str: str, similarity_top_k: int
+    ) -> Response:
+        """Query the index as a collapsed tree -- i.e. a single pool of nodes."""
+        return await self.index.as_retriever(
+            similarity_top_k=similarity_top_k
+        ).aretrieve(query_str)
+
+    async def tree_traversal_retrieval(
+        self, query_str: str, similarity_top_k: int
+    ) -> Response:
+        """Query the index as a tree, traversing the tree from the top down."""
+        # get top k nodes for each level, starting with the top
+        parent_ids = None
+        selected_node_ids = set()
+        selected_nodes = []
+        level = self.tree_depth - 1
+        while level >= 0:
+            # retrieve nodes at the current level
+            if parent_ids is None:
+                nodes = await self.index.as_retriever(
+                    similarity_top_k=similarity_top_k,
+                    filters=MetadataFilters(
+                        filters=[MetadataFilter(key="level", value=level)]
+                    ),
+                ).aretrieve(query_str)
+
+                for node in nodes:
+                    if node.id_ not in selected_node_ids:
+                        selected_nodes.append(node)
+                        selected_node_ids.add(node.id_)
+
+                parent_ids = [node.id_ for node in nodes]
+                if self.verbose:
+                    print(f"Retrieved parent IDs from level {level}: {parent_ids!s}")
+            # retrieve nodes that are children of the nodes at the previous level
+            elif parent_ids is not None and len(parent_ids) > 0:
+                nested_nodes = await asyncio.gather(
+                    *[
+                        self.index.as_retriever(
+                            similarity_top_k=similarity_top_k,
+                            filters=MetadataFilters(
+                                filters=[MetadataFilter(key="parent_id", value=id_)]
+                            ),
+                        ).aretrieve(query_str)
+                        for id_ in parent_ids
+                    ]
+                )
+
+                nodes = [node for nested in nested_nodes for node in nested]
+                for node in nodes:
+                    if node.id_ not in selected_node_ids:
+                        selected_nodes.append(node)
+                        selected_node_ids.add(node.id_)
+
+                if self.verbose:
+                    print(f"Retrieved {len(nodes)} from parents at level {level}.")
+
+                level -= 1
+                parent_ids = None
+
+        return selected_nodes
+
+    async def _aget(
+        self,
+        messages: Optional[List[ChatMessage]],
+        mode: QueryModes = "tree_traversal",
+        similarity_top_k: int = 2,
+        last_n: int = 1,
+        **kwargs,
+    ) -> List[NodeWithScore]:
+        """Retrieve nodes given query and mode."""
+        start_time = time.time()
+        if len(messages) == 0:
+            return ""
+        if last_n > 0:
+            messages = messages[-last_n:]
         else:
-            # No external vector store; reset in-memory tree index
-            self._storage_ctx = StorageContext.from_defaults()
-            self._index = TreeIndex([], storage_context=self._storage_ctx, num_children=3, build_tree=True)
-            print("In-memory tree index reset")
+            messages = messages
+        query_str = ""
+        for msg in messages:
+            query_str += msg.content + "\n"
+        if mode == "tree_traversal":
+            res = await self.tree_traversal_retrieval(query_str, similarity_top_k)
+        elif mode == "collapsed":
+            res = await self.collapsed_retrieval(query_str, similarity_top_k)
+        else:
+            raise ValueError(f"Invalid mode: {mode}")
+        if not res:
+            res = []
+        print(f"Retrieved {len(res)} nodes from HVM.")
+        res_str = ""
+        for i, node in enumerate(res):
+            res_str += f"<c_{i}>\n{node.node.text}\n</c_{i}>\n"
+        end_time = time.time()
+        self.retrieval_time += end_time - start_time
+        self.update_stats()
+        return res_str
 
-    def print_tree(self, max_chars: int = 80) -> None:
-        """Helper function just for better formatting when testing"""
+    async def aclose(self):
+        # this is not working correctly, need to debug
+        """Close any async resources (Qdrant aiohttp session, LLM/Emb clients, etc.)."""
+        # --- Close Qdrant Async client (primary culprit for aiohttp warnings) ---
+        qdrant_clients = []
+        # Possible locations depending on LlamaIndex internals
 
-        # Calls the built-in printer if exists
-        if hasattr(self._index, "print_tree"):
+        try:
+            sc = getattr(self.index, "storage_context", None)
+        except Exception:
+            sc = None
+        if sc is not None:
             try:
-                self._index.print_tree(max_chars=max_chars)
-                return
+                vs = getattr(sc, "vector_store", None)
+            except Exception:
+                vs = None
+        else:
+            vs = None
+
+        for cand in (vs,):
+            if cand is None:
+                continue
+            # QdrantVectorStore stores the async client typically as "_aclient" (sometimes "aclient")
+            aclient = (
+                getattr(cand, "_aclient", None)
+                or getattr(cand, "aclient", None)
+                or getattr(cand, "client", None)
+            )
+            if aclient is not None:
+                qdrant_clients.append(aclient)
+        print(
+            f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@ Closing {len(qdrant_clients)} Qdrant async clients."
+        )
+        # Close unique clients
+        seen_ids = set()
+        for qc in qdrant_clients:
+            if id(qc) in seen_ids:
+                continue
+            seen_ids.add(id(qc))
+            try:
+                close_res = getattr(qc, "close", None)
+                if close_res is None:
+                    close_res = getattr(qc, "aclose", None)
+                if close_res is not None:
+                    res = close_res()
+                    if asyncio.iscoroutine(res):
+                        await res
             except Exception:
                 pass
 
-        # Manually traverse root to children
+
+
+# Set a random seed for reproducibility
+RANDOM_SEED = 224
+random.seed(RANDOM_SEED)
+
+
+def global_cluster_embeddings(
+    embeddings: np.ndarray,
+    dim: int,
+    n_neighbors: Optional[int] = None,
+    metric: str = "cosine",
+) -> np.ndarray:
+    if n_neighbors is None:
+        n_neighbors = int((len(embeddings) - 1) ** 0.5)
+    return umap.UMAP(
+        n_neighbors=n_neighbors, n_components=dim, metric=metric
+    ).fit_transform(embeddings)
+
+
+
+def local_cluster_embeddings(
+    embeddings: np.ndarray, dim: int, num_neighbors: int = 10, metric: str = "cosine"
+) -> np.ndarray:
+    return umap.UMAP(
+        n_neighbors=num_neighbors, n_components=dim, metric=metric
+    ).fit_transform(embeddings)
+
+#
+# def get_optimal_clusters(
+#     embeddings: np.ndarray, max_clusters: int = 50, random_state: int = RANDOM_SEED
+# ) -> int:
+#     max_clusters = min(max_clusters, len(embeddings))
+#     n_clusters = np.arange(1, max_clusters)
+#     bics = []
+#     for n in n_clusters:
+#         gm = GaussianMixture(n_components=n, random_state=random_state)
+#         gm.fit(embeddings)
+#         bics.append(gm.bic(embeddings))
+#     return n_clusters[np.argmin(bics)]
+#
+
+# adjusted version of get_optimal_clusters to avoid numerical issue during clustering
+def get_optimal_clusters(
+    embeddings: np.ndarray, max_clusters: int = 50, random_state: int = RANDOM_SEED
+) -> int:
+    X = np.asarray(embeddings, dtype=np.float64)
+    n, d = X.shape if X.ndim == 2 else (len(X), 1)
+    if n <= 1:
+        return 1
+
+    # Robust caps:
+    # - don't try more components than unique samples
+    # - require ~2 samples per component to reduce singleton risk
+    n_unique = len(np.unique(X, axis=0))
+    hard_cap = max(1, min(max_clusters, n_unique, n // 2 if n >= 4 else 1))
+    n_grid = np.arange(1, hard_cap + 1)
+
+    # Feature scaling often fixes PD issues
+    Xs = _stabilize_features(X)
+
+    bics = []
+    ks = []
+    for k in n_grid:
+        gm = _safe_fit_gmm(Xs, k, random_state)
+        if gm is None:
+            continue
+        bics.append(gm.bic(Xs))
+        ks.append(k)
+
+    if not ks:
+        # Last-resort: try a small Bayesian mixture that prunes components automatically
         try:
-            graph = getattr(self._index, "_index_graph", None)
-            root_nodes = getattr(graph, "root_nodes", []) if graph else []
+            bgm = BayesianGaussianMixture(
+                n_components=min(5, max(1, n - 1)),
+                covariance_type="diag",
+                weight_concentration_prior_type="dirichlet_process",
+                reg_covar=1e-3,
+                random_state=random_state,
+                max_iter=500,
+            ).fit(Xs)
+            # Effective components with non-trivial weight
+            eff = (bgm.weights_ > (1.0 / max(10, n))).sum()
+            return int(max(1, eff))
         except Exception:
-            root_nodes = []
+            return 1
 
-        # Print the last few stored texts (if previous approach didn't work)
-        if not root_nodes:
-            
-            print("(print_tree not supported - showing last inserts)")
-            for doc_id, doc in list(self._index.docstore.docs.items())[-5:]:  # type: ignore[attr-defined]
-                snippet = re.sub(r"\s+", " ", doc.text).strip()[:max_chars] #another display method: snippet = doc.text.replace("", " ")[:max_chars]
-                print(f"- {doc_id[:6]}... {snippet}")
-            return
+    return int(ks[int(np.argmin(bics))])
 
 
-        def _print(node, indent: int = 0):
-            spacer = "  " * indent  # alignment
-            snippet = re.sub(r"\s+", " ", doc.text).strip()[:max_chars]
-            print(f"{spacer}|-- {snippet}")
-
-            # children  kept in node.relationships[NodeRelationship.CHILD]
-            rels = getattr(node, "relationships", {})
-            from llama_index.core import NodeRelationship  # local import avoids top‑level dep
-
-            children = rels.get(NodeRelationship.CHILD, [])
-            child_ids = [c.node_id if hasattr(c, "node_id") else c for c in children]
-
-            for cid in child_ids:
-                child_node = self._index.docstore.get_node(cid)
-                if child_node is not None:
-                    _print(child_node, indent + 1)
+def GMM_cluster(embeddings: np.ndarray, threshold: float, random_state: int = 0):
+    n_clusters = get_optimal_clusters(embeddings)
+    gm = GaussianMixture(n_components=n_clusters, random_state=random_state)
+    gm.fit(embeddings)
+    probs = gm.predict_proba(embeddings)
+    labels = [np.where(prob > threshold)[0] for prob in probs]
+    return labels, n_clusters
 
 
-        print("ROOTS:")
-        for root in root_nodes:
-            _print(root)
+# this is to avoid accesss issue when runing in multiple instance in async mode
+_NUMBA_LOCK = threading.RLock()
+# from numba import threading_layer
+# print("Numba layer:", threading_layer())  # quick sanity check
+
+def perform_clustering(
+    embeddings: np.ndarray,
+    dim: int,
+    threshold: float,
+) -> List[np.ndarray]:
+    with _NUMBA_LOCK:
+        # If the number of embeddings is less than or equal to the dimension, return a list of zeros
+        # This means all nodes are in the same cluster.
+        # Otherwise, we will get an error when trying to cluster.
+        if len(embeddings) <= dim + 1:
+            return [np.array([0]) for _ in range(len(embeddings))]
+
+        reduced_embeddings_global = global_cluster_embeddings(embeddings, dim)
+        global_clusters, n_global_clusters = GMM_cluster(
+            reduced_embeddings_global, threshold
+        )
+
+        all_local_clusters = [np.array([]) for _ in range(len(embeddings))]
+        total_clusters = 0
+
+        for i in range(n_global_clusters):
+            global_cluster_embeddings_ = embeddings[
+                np.array([i in gc for gc in global_clusters])
+            ]
+
+            if len(global_cluster_embeddings_) == 0:
+                continue
+            if len(global_cluster_embeddings_) <= dim + 1:
+                local_clusters = [np.array([0]) for _ in global_cluster_embeddings_]
+                n_local_clusters = 1
+            else:
+                reduced_embeddings_local = local_cluster_embeddings(
+                    global_cluster_embeddings_, dim
+                )
+                local_clusters, n_local_clusters = GMM_cluster(
+                    reduced_embeddings_local, threshold
+                )
+
+            for j in range(n_local_clusters):
+                local_cluster_embeddings_ = global_cluster_embeddings_[
+                    np.array([j in lc for lc in local_clusters])
+                ]
+                indices = np.where(
+                    (embeddings == local_cluster_embeddings_[:, None]).all(-1)
+                )[1]
+                for idx in indices:
+                    all_local_clusters[idx] = np.append(
+                        all_local_clusters[idx], j + total_clusters
+                    )
+
+            total_clusters += n_local_clusters
+
+        return all_local_clusters
+
+
+def get_clusters(
+    nodes: List[BaseNode],
+    embedding_map: Dict[str, List[List[float]]],
+    max_length_in_cluster: int = 10000,  # 10k tokens max per cluster
+    tokenizer: Optional[
+        Callable[[str], List[int]]
+    ] = None,  # use tokenizer from llama_index
+    reduction_dimension: int = 10,
+    threshold: float = 0.1,
+    prev_total_length=None,  # to keep track of the total length of the previous clusters
+) -> List[List[BaseNode]]:
+    tokenizer = tokenizer or get_tokenizer()
+
+    # get embeddings
+    embeddings = np.array([np.array(embedding_map[node.id_]) for node in nodes])
+
+    # Perform the clustering
+    clusters = perform_clustering(
+        embeddings, dim=reduction_dimension, threshold=threshold
+    )
+
+    # Initialize an empty list to store the clusters of nodes
+    node_clusters = []
+
+    # Iterate over each unique label in the clusters
+    for label in np.unique(np.concatenate(clusters)):
+        # Get the indices of the nodes that belong to this cluster
+        indices = [i for i, cluster in enumerate(clusters) if label in cluster]
+
+        # Add the corresponding nodes to the node_clusters list
+        cluster_nodes = [nodes[i] for i in indices]
+
+        # Base case: if the cluster only has one node, do not attempt to recluster it
+        if len(cluster_nodes) == 1:
+            node_clusters.append(cluster_nodes)
+            continue
+
+        # Calculate the total length of the text in the nodes
+        total_length = sum([len(tokenizer(node.text)) for node in cluster_nodes])
+
+        # If the total length exceeds the maximum allowed length, recluster this cluster
+        # If the total length did not change from the previous call then don't try again to avoid infinite recursion!
+        if total_length > max_length_in_cluster and (
+            prev_total_length is None or total_length < prev_total_length
+        ):
+            node_clusters.extend(
+                get_clusters(
+                    cluster_nodes,
+                    embedding_map,
+                    max_length_in_cluster=max_length_in_cluster,
+                    tokenizer=tokenizer,
+                    reduction_dimension=reduction_dimension,
+                    threshold=threshold,
+                    prev_total_length=total_length,
+                )
+            )
+        else:
+            node_clusters.append(cluster_nodes)
+
+    return node_clusters
+
+
+# --- helper: robust GMM fit with retries ---
+def _safe_fit_gmm(
+    X: np.ndarray,
+    n_components: int,
+    random_state: int,
+    *,
+    cov_types: Sequence[str] = ("full", "diag", "spherical"),
+    reg_grid: Sequence[float] = (1e-6, 1e-5, 1e-4, 1e-3),
+    n_init: int = 2,
+    max_iter: int = 300,
+):
+    X = np.asarray(X, dtype=np.float64)
+    for cov in cov_types:
+        for reg in reg_grid:
+            try:
+                gm = GaussianMixture(
+                    n_components=n_components,
+                    covariance_type=cov,
+                    reg_covar=reg,
+                    random_state=random_state,
+                    n_init=n_init,
+                    max_iter=max_iter,
+                    init_params="kmeans",
+                )
+                gm.fit(X)
+                return gm
+            except Exception:
+                continue
+    return None
+
+
+# --- optional: stabilize post-UMAP space (often helps small noisy batches) ---
+def _stabilize_features(X: np.ndarray) -> np.ndarray:
+    if X.size == 0:
+        return X
+    X = np.asarray(X, dtype=np.float64)
+    # Standardize each dimension; avoids near-zero-variance axes breaking covariances
+    return StandardScaler(with_mean=True, with_std=True).fit_transform(X)
+
+
+# ---- assume the robust sync helpers you already have are imported here ----
+# _safe_n_neighbors, global_cluster_embeddings, local_cluster_embeddings,
+# get_optimal_clusters, GMM_cluster, perform_clustering  (all sync, robust)
+
+TokenizeFn = Union[Callable[[str], List[int]], Callable[[str], Awaitable[List[int]]]]
+
+
+async def _to_thread(func, /, *args, **kwargs):
+    """Shorthand to offload sync CPU work to default threadpool."""
+    return await asyncio.to_thread(func, *args, **kwargs)
+
+
+async def _maybe_await_tokenize(tokenizer: TokenizeFn, text: str) -> List[int]:
+    if asyncio.iscoroutinefunction(tokenizer):
+        return await tokenizer(text)  # rare
+    # Offload sync tokenization to a thread to avoid blocking loop when many nodes
+    return await asyncio.to_thread(tokenizer, text)
+
+
+async def _cluster_once_async(
+    embeddings: np.ndarray,
+    dim: int,
+    threshold: float,
+) -> List[np.ndarray]:
+    # Offload the whole clustering pass; it calls NumPy/UMAP/sklearn in C
+    return await _to_thread(perform_clustering, embeddings, dim, threshold)
+
+
+async def _token_lengths_async(
+    nodes: Sequence[BaseNode],
+    tokenizer: TokenizeFn,
+) -> List[int]:
+    # Tokenize node.text concurrently (bounded by default threadpool size)
+    tasks = [
+        asyncio.create_task(_maybe_await_tokenize(tokenizer, n.text)) for n in nodes
+    ]
+    toks = await asyncio.gather(*tasks)
+    return [len(t) for t in toks]
+
+
+async def aget_clusters(
+    nodes: List[BaseNode],
+    embedding_map: Dict[str, List[float]],
+    *,
+    max_length_in_cluster: int = 10000,
+    tokenizer: Optional[TokenizeFn] = None,
+    reduction_dimension: int = 10,
+    threshold: float = 0.1,
+    prev_total_length: Optional[int] = None,
+) -> List[List[BaseNode]]:
+    """
+    Async version of get_clusters:
+      - Offloads UMAP/GMM and tokenization to threads
+      - Safe for empty/degenerate cases
+      - Preserves recursive re-clustering logic without blocking the event loop
+    """
+    if not nodes:
+        return []
+
+    tokenizer = tokenizer or get_tokenizer()
+
+    # Build embeddings array off the loop (cheap, but keep IO loop clean)
+    embeddings = np.array(
+        [np.array(embedding_map[n.id_], dtype=float) for n in nodes], dtype=float
+    )
+
+    clusters = await _cluster_once_async(
+        embeddings, dim=reduction_dimension, threshold=threshold
+    )
+
+    # Build label set safely
+    label_set: set[int] = set()
+    for arr in clusters:
+        if arr.size:
+            label_set.update(arr.tolist())
+
+    if not label_set:
+        # No labels → one big cluster
+        return [nodes]
+
+    node_clusters: List[List[BaseNode]] = []
+
+    for label in sorted(label_set):
+        indices = [i for i, arr in enumerate(clusters) if label in arr]
+        cluster_nodes = [nodes[i] for i in indices]
+
+        if len(cluster_nodes) == 1:
+            node_clusters.append(cluster_nodes)
+            continue
+
+        # Token lengths without blocking loop
+        lengths = await _token_lengths_async(cluster_nodes, tokenizer)
+        total_length = sum(lengths)
+
+        # Recluster if too large (and not stuck at same size)
+        if total_length > max_length_in_cluster and (
+            prev_total_length is None or total_length < prev_total_length
+        ):
+            # Recursive async call
+            sub = await aget_clusters(
+                cluster_nodes,
+                embedding_map,
+                max_length_in_cluster=max_length_in_cluster,
+                tokenizer=tokenizer,
+                reduction_dimension=reduction_dimension,
+                threshold=threshold,
+                prev_total_length=total_length,
+            )
+            node_clusters.extend(sub)
+        else:
+            node_clusters.append(cluster_nodes)
+
+    return node_clusters
+
+
+# SMOKE TESTS
+# TODO will move the following code block in the future as regression test
+
+
+def data_loader(file_name: str, is_abs_path: bool = False) -> list:
+    """
+    Load dataset from a JSON file.
+
+    Args:
+        file_name (str): Path to the JSON dataset file
+
+    Returns:
+        list: Dataset loaded from the JSON file
+
+    Raises:
+        FileNotFoundError: If the dataset file doesn't exist
+        json.JSONDecodeError: If the file contains invalid JSON
+    """
+    import json
+    import os
+
+    # Get the directory where this script lives
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+    # If file_name is not an absolute path, make it relative to the script directory
+    data_file = file_name
+
+    # Check if file exists before loading
+    if not os.path.exists(data_file):
+        raise FileNotFoundError(f"Cannot find dataset file: {data_file}")
+
+    print(f"Loading dataset from {data_file}...")
+
+    try:
+        with open(data_file, "r") as f:
+            dataset = json.load(f)
+
+        print(f"Dataset loaded with {len(dataset)} total questions")
+        return dataset
+
+    except json.JSONDecodeError as e:
+        raise json.JSONDecodeError(
+            f"Invalid JSON in file {data_file}: {str(e)}", e.doc, e.pos
+        )
+    except Exception as e:
+        raise Exception(f"Error loading dataset from {data_file}: {str(e)}")
+
+
+import time
+
+
+async def run_smoke_test(dataset, hvm: HierarchicalVectorMemory):
+    print("Running smoke test...")
+    print(f"Dataset contains {len(dataset)} items.")
+    try:
+        for q in dataset:
+            print("--------------------------------")
+            print("+++++++++++++++++++++++++++++++++++")
+            print("--------------------------------")
+            haystack_sessions = q.get("haystack_sessions", [])
+            haystack_session_ids = q.get("haystack_session_ids")
+            question_id = q.get("question_id")
+            question = q.get("question")
+            answer = q.get("answer")
+            answer_session_ids = q.get("answer_session_ids", [])
+            print(
+                f"Processing question with {len(haystack_sessions)} haystack sessions."
+            )
+
+            total_turn = 0
+            buffer = []
+            for idx, session in enumerate(haystack_sessions):
+                print(f"Processing haystack session {idx} with {len(session)} turns.")
+                for turn in session:
+                    content = turn["content"].replace(
+                        "<|endoftext|>", ""
+                    )  # Clean content to avoid tokenizer special-token errors
+
+                    if turn["role"] == "user":
+                        msg = ChatMessage(role="user", content=content)
+                    elif turn["role"] == "assistant":
+                        msg = ChatMessage(role="assistant", content=content)
+                    else:
+                        msg = None
+                        print(f"Unknown role {turn['role']} in turn, skipping.")
+                    if msg:
+                        buffer.append(msg)
+                        total_turn += 1
+            await hvm.aput(buffer)
+            print(
+                f"Inserted all haystack sessions into HVM. Total turns inserted for this question: {total_turn}"
+            )
+            print(f"Question: {question}")
+            response = await hvm.aget(
+                messages=[ChatMessage(role="user", content=question)],
+                mode=QueryModes.tree_traversal,
+                similarity_top_k=1,
+                last_n=1,
+            )
+            print(f"Retrieved context from HVM.\n{response}")
+            print(f"Answer: {answer}")
+    finally:
+        print("Closing HVM...")
+        await hvm.aclose()
+
+
+if __name__ == "__main__":
+    time_start = time.time()
+    print("Creating HVM...")
+
+    # Example usage of data_loader
+    try:
+        # Try to load the default dataset file
+        dataset = data_loader("/Users/judyyu/memagents/asdrp/eval/data/custom_history/longmemeval_m_sample5_20.json")
+        # dataset = data_loader("longmemeval_single_500.json")
+        print(f"Successfully loaded dataset with {len(dataset)} items")
+
+        # Print first item keys to show structure
+        # if dataset:
+        #     print(f"First item keys: {list(dataset[0].keys())}")
+
+    except FileNotFoundError as e:
+        print(f"Dataset file not found: {e}")
+    except Exception as e:
+        print(f"Error loading dataset: {e}")
+    q_client = create_qdrant_client()
+    hvm = create_hvm(
+        client=q_client,
+        name="test_hvm",
+        collection_name="test_hvm_collection" + str(uuid.uuid4()),
+        tree_depth=3,
+    )
+    print("HVM created.")
+    asyncio.run(run_smoke_test(dataset, hvm))
+    time_end = time.time()
+    print(f"Total time taken: {time_end - time_start:.2f} seconds")

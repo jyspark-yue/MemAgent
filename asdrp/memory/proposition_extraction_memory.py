@@ -1,18 +1,19 @@
 #############################################################################
-# File: proposition_extraction.py
+# File: proposition_extraction_memory.py
 #
 # Description:
 #   Class for proposition (facts, opinions, preferences, beliefs, experiences, and goals) extraction from conversations
 #
 # Authors:
 #   @author     Theodore Mui (theodoremui@gmail.com)
-#               - Created proposition_extraction.py
+#               - Modified FactExtractionMemoryBlock (LlamaIndex) to create proposition_extraction_memory.py
 #   @author     Eric Vincent Fernandes
 #               - Implemented tracking for token/cost metrics
+#               - Modified code to be compatible with Gemini (GenAI)
 #
 # Date:
 #   Created:    July 4, 2025  (Theodore Mui)
-#   Modified:   September 20, 2025 (Eric Vincent Fernandes)
+#   Modified:   October 5, 2025 (Eric Vincent Fernandes)
 #############################################################################
 
 import re
@@ -24,24 +25,25 @@ from llama_index.core.bridge.pydantic import Field, field_validator
 from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
 from llama_index.core.llms import LLM
 from llama_index.core.memory.memory import BaseMemoryBlock
-from llama_index.core.prompts import (BasePromptTemplate, PromptTemplate,
-                                      RichPromptTemplate)
-from llama_index.llms.openai import OpenAI
+from llama_index.core.prompts import (BasePromptTemplate, PromptTemplate, RichPromptTemplate)
+from llama_index.core.utils import count_tokens
+from llama_index.llms.google_genai import GoogleGenAI
+from google.genai import types
 
-DEFAULT_EXTRACT_PROMPT = RichPromptTemplate("""You are a comprehensive information extraction system designed to identify key propositions from conversations.
+DEFAULT_EXTRACT_PROMPT = RichPromptTemplate("""You are a precise proposition extraction system designed to identify key information from conversations.
 
 INSTRUCTIONS:
-1. Review the conversation segment and existing propositions provided prior to this message
-2. Extract specific, concrete propositions (facts, opinions, preferences, beliefs, experiences, and goals) the user has disclosed or important information discovered
-3. Focus on all types of information including:
-   - Factual information (preferences, personal details, requirements, constraints, context)
-   - Opinions and beliefs (what the user thinks, feels, or believes about topics)
-   - Preferences and choices (what the user likes, dislikes, or prefers)
-   - Experiences and anecdotes (what the user has done or experienced)
-   - Goals and intentions (what the user wants to achieve or plans to do)
-4. Format each proposition as a separate <proposition> XML tag
-5. Include both objective facts and subjective opinions - capture the full range of user-disclosed information
-6. Do not duplicate information that are already in the existing propositions list
+1. Review the conversation segment and existing propositions provided prior to this message.
+2. Extract specific, concrete propositions the user has disclosed or important information discovered
+3. Focus on all types of information like preferences, personal details, requirements, constraints, or context
+4. Format each proposition as a separate <proposition> XML tag.
+5. Include both objective facts and subjective opinions - capture the full range of user-disclosed information.
+6. Do not duplicate propositions that are already in the existing propositions list.
+7. KEEP TOTAL OUTPUT UNDER 60000 TOKENS.
+
+AFTER you draft your output:
+- CHECK: Ensure the output is under 60000 tokens or 240,000 characters and contains no duplicate propositions.
+- IF it fails length, rewrite or condense until it passes.
 
 <existing_propositions>
 {{ existing_propositions }}
@@ -56,20 +58,20 @@ Return ONLY the extracted propositions in this exact format:
 
 If no new propositions are present, return: <propositions></propositions>""")
 
-DEFAULT_CONDENSE_PROMPT = RichPromptTemplate("""You are a comprehensive proposition condensing system designed to identify key information from conversations.
+DEFAULT_CONDENSE_PROMPT = RichPromptTemplate("""You are a precise proposition condensing system designed to identify key information from conversations.
 
 INSTRUCTIONS:
-1. Review the current list of existing propositions
-2. Condense the propositions into a more concise list, less than {{ max_propositions }} propositions
-3. Focus on all types of information including:
-   - Factual information (preferences, personal details, requirements, constraints, context)
-   - Opinions and beliefs (what the user thinks, feels, or believes about topics)
-   - Preferences and choices (what the user likes, dislikes, or prefers)
-   - Experiences and anecdotes (what the user has done or experienced)
-   - Goals and intentions (what the user wants to achieve or plans to do)
-4. Format each proposition as a separate <proposition> XML tag
-5. Include both objective facts and subjective opinions - preserve the full range of user information
-6. Do not duplicate propositions that are already in the existing propositions list
+1. Review the current list of existing propositions.
+2. Condense the propositions into a more concise list, less than {{ max_propositions }} propositions.
+3. Focus on all types of information like preferences, personal details, requirements, constraints, or context
+4. Format each proposition as a separate <proposition> XML tag.
+5. Include both objective facts and subjective opinions - preserve the full range of user information.
+6. Do not duplicate propositions that are already in the existing propositions list.
+7. KEEP TOTAL OUTPUT UNDER 60000 TOKENS.
+
+AFTER you draft your output:
+- CHECK: Ensure the output is under 60000 tokens or 240,000 characters and contains no duplicate propositions.
+- IF it fails length, rewrite or condense until it passes.
 
 <existing_propositions>
 {{ existing_propositions }}
@@ -84,9 +86,39 @@ Return ONLY the condensed propositions in this exact format:
 
 If no new propositions are present, return: <propositions></propositions>""")
 
+safety_settings = [
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+        # threshold=types.HarmBlockThreshold.OFF,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        # threshold=types.HarmBlockThreshold.OFF,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        # threshold=types.HarmBlockThreshold.OFF,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        # threshold=types.HarmBlockThreshold.OFF,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    )
+]
+
+gen_cfg = types.GenerateContentConfig(safety_settings=safety_settings, temperature=0.2)
 
 def get_default_llm(callback_manager=CallbackManager(handlers=[TokenCountingHandler()])) -> LLM:
-    return OpenAI(model="gpt-5-nano-2025-08-07", temperature=0.0, timeout=1200.0, callback_manager=callback_manager)
+    return GoogleGenAI(
+        model="gemini-2.5-flash-lite",
+        temperature=0.2,
+        max_retries=100,
+        callback_manager=callback_manager,
+        generation_config=gen_cfg,
+    )
 
 class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
     """
@@ -159,8 +191,6 @@ class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
 
         # Track before call
         start_time = time.time()
-        initial_input_tokens = getattr(self.llm.callback_manager.handlers, "prompt_llm_token_count", 0)
-        initial_output_tokens = getattr(self.llm.callback_manager.handlers, "completion_llm_token_count", 0)
 
         # Format existing propositions for the prompt
         existing_propositions_text = ""
@@ -170,15 +200,19 @@ class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
             )
 
         # Create the prompt
-        prompt_messages = self.proposition_extraction_prompt_template.format_messages(
-            existing_propositions=existing_propositions_text,
-        )
+        prompt_messages = self.proposition_extraction_prompt_template.format_messages(existing_propositions=existing_propositions_text)
 
         # Get the propositions extraction
         response = await self.llm.achat(messages=[*messages, *prompt_messages])
 
+        # Count input tokens using count_tokens
+        total_input_text = "".join([m.content for m in messages]) + existing_propositions_text
+        self.input_tokens = count_tokens(total_input_text)
+
         # Parse the XML response to extract propositions
         propositions_text = response.message.content or ""
+        self.output_tokens = count_tokens(propositions_text)  # count output tokens
+
         new_propositions = self._parse_propositions_xml(propositions_text)
 
         # Add new propositions to the list, avoiding exact-match duplicates
@@ -187,7 +221,7 @@ class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
                 self.propositions.append(proposition)
 
         # Condense the propositions if they exceed the max_propositions
-        if len(self.propositions) > self.max_propositions:
+        if len(self.propositions) >= self.max_propositions:
             existing_propositions_text = "\n".join(
                 [f"<proposition>{proposition}</proposition>" for proposition in self.propositions]
             )
@@ -197,15 +231,17 @@ class PropositionExtractionMemoryBlock(BaseMemoryBlock[str]):
                 max_propositions=self.max_propositions,
             )
             response = await self.llm.achat(messages=[*messages, *prompt_messages])
+
+            # count tokens for condense output
+            self.input_tokens += count_tokens(existing_propositions_text)
+            self.output_tokens += count_tokens(response.message.content or "")
+
+            # Replace the propositions with the condensed list
             new_propositions = self._parse_propositions_xml(response.message.content or "")
             if new_propositions:
                 self.propositions = new_propositions
 
-        # memory_time = (time.time() - paused_memory_time) + (unpaused_memory_time - initial_memory_time)
         self.load_chat_history_time = time.time() - start_time
-        self.input_tokens = getattr(self.llm.callback_manager.handlers, "prompt_llm_token_count", 0) - initial_input_tokens
-        self.output_tokens = getattr(self.llm.callback_manager.handlers, "completion_llm_token_count", 0) - initial_output_tokens
-
 
     def _parse_propositions_xml(self, xml_text: str) -> List[str]:
         """Parse propositions from XML format."""
