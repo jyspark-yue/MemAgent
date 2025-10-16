@@ -172,57 +172,29 @@ async def _retry_aput(memory_block, buffer):
     for attempt in range(1, RETRY_ATTEMPTS + 1):
         try:
             await memory_block._aput(buffer)
-            last_exc = None
-            break
+            return
         except ClientError as e:   # <-- explicitly catch Gemini API errors
-            print(f"ClientError caught (attempt {attempt}): {e}")
             last_exc = e
+            print(f"ClientError caught (attempt {attempt}): {e}")
             if getattr(e, "status", None) in [502, 503, 504]:
                 delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
                 delay *= random.uniform(0.8, 1.2)    # add ±20% jitter
                 print(f"Transient server error {e.status}, backing off {delay}s...")
                 await asyncio.sleep(delay)
                 continue
-            raise
-
-        except RuntimeError as e:
-            # specifically catch Gemini’s “Response was terminated early: MAX_TOKENS”
-            print(f"Gemini hit content issue (attempt {attempt}): {e}")
-            last_exc = e
-            if "MAX_TOKENS" in str(e) or "PROHIBITED_CONTENT" in str(e):
-                # delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
-                delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY - 5)
-                delay = delay * random.uniform(0.8, 1.2)    # add ±20% jitter
-                print(f"Backing off {delay}s before retry...")
-                await asyncio.sleep(delay)
-                continue
-            raise  # different RuntimeError
-
-        except ValueError as e:
-            print(f"No candidates detected (attempt {attempt}): {e}")
-            last_exc = e
-            if "no candidates" in str(e):
-                delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY + 10)
-                delay = delay * random.uniform(0.8, 1.2)  # add ±20% jitter
-                print(f"Backing off {delay}s before retry...")
-                await asyncio.sleep(delay)
-                continue
-            raise  # different RuntimeError
 
         except Exception as e:
+            last_exc = e
             print(f"Error processing buffered turns (attempt {attempt}): {e}")
             traceback.print_exc()
-            last_exc = e
             if "Rate limit" in str(e) or "429" in str(e):
-                # delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
                 delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
                 delay = delay * random.uniform(0.8, 1.2)    # add ±20% jitter
                 print(f"RateLimit detected, backing off {delay}s before retry...")
                 await asyncio.sleep(delay)
                 continue
-            raise
-    if last_exc is not None:
-        raise last_exc
+
+    print(f"DO NOT RESTART CODE... skipping this batch after {RETRY_ATTEMPTS} attempts due to: {last_exc}")
 
 def reset_memory(agent_object):
     """
@@ -250,7 +222,7 @@ class LongMemEvalRunner:
         # ==============================================================================================================
         # !!! IMPORTANT: CHANGE LIMIT AS NEEDED !!!
         # ==============================================================================================================
-        self.semaphore = asyncio.Semaphore(30)   # Limits number of questions processed at a time
+        self.semaphore = asyncio.Semaphore(25)   # Limits number of questions processed at a time
 
     async def process_question(self, question, question_num):
         """
@@ -494,7 +466,7 @@ class LongMemEvalRunner:
         # ==============================================================================================================
         # !!! IMPORTANT: SET BATCH SIZE SAME AS SEMAPHORE LIMIT !!!
         # ==============================================================================================================
-        batch_size = 30
+        batch_size = 25
 
         print(f"Running {batch_size} questions in parallel...")
 
@@ -564,7 +536,7 @@ class LongMemEvalRunner:
         # ==============================================================================================================
         # !!! IMPORTANT: CHANGE SUMMARY FILE NAME AS NEEDED !!!
         # ==============================================================================================================
-        summary_file = os.path.join(os.path.dirname(output_file), "episodic_agent_performance_summary.json")
+        summary_file = os.path.join(os.path.dirname(output_file), "reductive_agent_performance_summary.json")
 
         # --- write summary to JSON file in the same folder as output_file ---
         with open(summary_file, "w") as f:
@@ -600,7 +572,7 @@ def main():
     # ==================================================================================================================
     # !!! IMPORTANT: CHANGE AGENT AS NEEDED !!!
     # ==================================================================================================================
-    runner = LongMemEvalRunner(EpisodicAgent)
+    runner = LongMemEvalRunner(ReductiveAgent)
 
     # Get the directory where this script lives
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -615,7 +587,7 @@ def main():
     # ==================================================================================================================
     # !!! IMPORTANT: CHANGE FILE NAME BASED ON AGENT !!!
     # ==================================================================================================================
-    output_file = "asdrp/results/episodic_agent_responses.json"
+    output_file = "asdrp/results/reductive_agent_responses.json"
 
     # Ensure output directory exists
     os.makedirs("results", exist_ok=True)
