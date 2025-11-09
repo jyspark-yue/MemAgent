@@ -171,3 +171,6 @@ tmp/
 qdrant_storage/
 
 AlphaPose
+
+asdrp/eval/
+asdrp/results/

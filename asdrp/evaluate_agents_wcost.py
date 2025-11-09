@@ -40,6 +40,7 @@ import uuid
 
 from llama_index.core.base.llms.types import ChatMessage
 
+from aiohttp import ClientConnectorError
 from asdrp.agent.summary_agent import SummaryAgent
 from asdrp.agent.reductive_agent import ReductiveAgent
 from asdrp.agent.episodic_agent import EpisodicAgent
@@ -141,6 +142,23 @@ async def load_chat_history(agent_object, haystack_sessions):
     )  # ReductiveAgent can accept batched user-assistant pairs without its quality being negatively affected
     batch_all = isinstance(agent_object, HVMAgent)
     all_messages = []  # Used only if batch_all is True
+
+    async def _flush_hvm_batch(force: bool = False):
+        """Flush accumulated turns for HVMAgent in manageable chunks."""
+        nonlocal all_messages
+        # Only HVMAgent uses this path
+        if not batch_all:
+            return
+        while (len(all_messages) >= MAX_HVM_BATCH_MESSAGES) or (
+            force and len(all_messages) > 0
+        ):
+            chunk = all_messages[:MAX_HVM_BATCH_MESSAGES]
+            all_messages = all_messages[MAX_HVM_BATCH_MESSAGES:]
+            print(
+                f"Flushing {len(chunk)} batched HVM turns "
+                f"(remaining buffered: {len(all_messages)})..."
+            )
+            await _retry_aput(memory_block, chunk)
     session_count = 0
     turn_count = 0
     for session in haystack_sessions:
@@ -171,6 +189,7 @@ async def load_chat_history(agent_object, haystack_sessions):
             if batch_all:
                 if msg is not None:
                     all_messages.append(msg)
+                    await _flush_hvm_batch()
             else:
                 if can_batch:
                     buffer.append(
@@ -197,70 +216,71 @@ async def load_chat_history(agent_object, haystack_sessions):
         # End of session: flush any leftover buffered pairs for batched memory blocks
         if can_batch and buffer and not batch_all:
             await _retry_aput(memory_block, buffer)
-    if batch_all and all_messages:
-        print(
-            f"Flushing all {len(all_messages)} messages (total turns: {turn_count}) to memory in one batch..."
-        )
-        await _retry_aput(memory_block, all_messages)
+    if batch_all:
+        await _flush_hvm_batch(force=True)
+
+APUT_TIMEOUT_SECS = 120
+MAX_HVM_BATCH_MESSAGES = 250  # limit turns per aput for HVMAgent to avoid long ingests, 
 
 
-async def _retry_aput(memory_block, buffer):
+async def _retry_aput(memory_block, buffer, summarize=None):
     last_exc = None
     for attempt in range(1, RETRY_ATTEMPTS + 1):
         try:
-            await memory_block._aput(buffer)
+            # HARD TIMEOUT around the ingest
+            if summarize is None:
+                await asyncio.wait_for(memory_block._aput(buffer), timeout=APUT_TIMEOUT_SECS)
+            else:
+                await asyncio.wait_for(memory_block._aput(buffer, summarize=summarize), timeout=APUT_TIMEOUT_SECS)
             last_exc = None
             break
-        except ClientError as e:  # <-- explicitly catch Gemini API errors
-            print(f"ClientError caught (attempt {attempt}): {e}")
+
+        except asyncio.TimeoutError as e:
+            last_exc = e
+            delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
+            delay *= random.uniform(0.8, 1.2)
+            print(f"[aput] Timeout after {APUT_TIMEOUT_SECS}s (attempt {attempt}/{RETRY_ATTEMPTS}). Backing off {delay:.1f}s...")
+            await asyncio.sleep(delay)
+            continue
+
+        except (ClientConnectorError, OSError) as e:
+            last_exc = e
+            delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
+            delay *= random.uniform(0.8, 1.2)
+            print(f"[aput] Connect error {type(e).__name__} (attempt {attempt}/{RETRY_ATTEMPTS}): {e}. Backing off {delay:.1f}s...")
+            await asyncio.sleep(delay)
+            continue
+
+        except ClientError as e:
+            print(f"[aput] ClientError (attempt {attempt}): {e}")
             last_exc = e
             if getattr(e, "status", None) in [502, 503, 504]:
                 delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
-                delay *= random.uniform(0.8, 1.2)  # add ±20% jitter
-                print(f"Transient server error {e.status}, backing off {delay}s...")
+                delay *= random.uniform(0.8, 1.2)
+                print(f"[aput] Transient {e.status}, backoff {delay:.1f}s...")
                 await asyncio.sleep(delay)
                 continue
             raise
 
-        except RuntimeError as e:
-            # specifically catch Gemini’s “Response was terminated early: MAX_TOKENS”
-            print(f"Gemini hit content issue (attempt {attempt}): {e}")
-            last_exc = e
-            if "MAX_TOKENS" in str(e) or "PROHIBITED_CONTENT" in str(e):
-                # delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
-                delay = min(
-                    RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY - 5
-                )
-                delay = delay * random.uniform(0.8, 1.2)  # add ±20% jitter
-                print(f"Backing off {delay}s before retry...")
-                await asyncio.sleep(delay)
-                continue
-            raise  # different RuntimeError
-
         except ValueError as e:
-            print(f"No candidates detected (attempt {attempt}): {e}")
             last_exc = e
             if "no candidates" in str(e):
-                delay = min(
-                    RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY + 10
-                )
-                delay = delay * random.uniform(0.8, 1.2)  # add ±20% jitter
-                print(f"Backing off {delay}s before retry...")
+                delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY + 10)
+                delay *= random.uniform(0.8, 1.2)
+                print(f"[aput] No candidates, backoff {delay:.1f}s...")
                 await asyncio.sleep(delay)
                 continue
-            raise  # different RuntimeError
+            raise
 
         except Exception as e:
-            print(f"Error processing buffered turns (attempt {attempt}): {e}")
-            traceback.print_exc()
             last_exc = e
             if "Rate limit" in str(e) or "429" in str(e):
-                # delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
                 delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
-                delay = delay * random.uniform(0.8, 1.2)  # add ±20% jitter
-                print(f"RateLimit detected, backing off {delay}s before retry...")
+                delay *= random.uniform(0.8, 1.2)
+                print(f"[aput] RateLimit, backoff {delay:.1f}s...")
                 await asyncio.sleep(delay)
                 continue
+            print(f"[aput] Non-retryable error: {e}")
             raise
     if last_exc is not None:
         raise last_exc
@@ -284,6 +304,7 @@ def reset_memory(agent_object):
             agent_object.memory, []
         )  # Resets agent
 
+EVAL_BATCH_SIZE = 25  # Number of questions to process in parallel
 
 class LongMemEvalRunner:
     """
@@ -302,7 +323,7 @@ class LongMemEvalRunner:
         # !!! IMPORTANT: CHANGE LIMIT AS NEEDED !!!
         # ==============================================================================================================
         self.semaphore = asyncio.Semaphore(
-            30
+            EVAL_BATCH_SIZE
         )  # Limits number of questions processed at a time
 
     async def process_question(self, question, question_num):
@@ -610,7 +631,7 @@ class LongMemEvalRunner:
         # ==============================================================================================================
         # !!! IMPORTANT: SET BATCH SIZE SAME AS SEMAPHORE LIMIT !!!
         # ==============================================================================================================
-        batch_size = 30
+        batch_size = EVAL_BATCH_SIZE
 
         print(f"Running {batch_size} questions in parallel...")
 
@@ -813,6 +834,6 @@ if __name__ == "__main__":
     )
     main(
         data_file,
-        output_file="hvm_agent_responses_m_sample_5_20.json",
-        summary_file="hvm_agent_summary_m_sample_5_20.json",
+        output_file="hvm_agent_responses_m_cleaned_part_01.json",
+        summary_file="hvm_agent_summary_m_cleaned_part_01.json",
     )

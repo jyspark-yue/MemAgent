@@ -29,6 +29,7 @@ from google.genai import types
 
 from asdrp.agent.base import AgentReply
 from asdrp.memory.episodic_memory import EpisodicMemoryBlock
+from asdrp.agent.base import AgentBase
 
 _safety_settings = [
     types.SafetySetting(
@@ -64,8 +65,11 @@ def _get_default_llm(callback_manager=CallbackManager(handlers=[TokenCountingHan
         generation_config=_gen_cfg,
     )
 
-class EpisodicAgent:
+class EpisodicAgent(AgentBase):
 
+    @property
+    def can_batch(self):
+        return True
     def __init__(self):
         self.llm = _get_default_llm()
         self.memory_block = EpisodicMemoryBlock(name="episodic_memory")

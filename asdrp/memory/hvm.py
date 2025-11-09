@@ -9,20 +9,7 @@
 #############################################################################
 
 
-"""
-Adjusted from https://github.com/run-llama/llama_index/blob/main/llama-index-packs/llama-index-packs-raptor/llama_index/packs/raptor
 
-Full credits to the original authors!
-"""
-
-#
-# use qdrant docker image
-# docker pull qdrant/qdrant
-# start qdrant with persistence
-# docker run -p 6333:6333 -p 6334:6334 \
-#     -v "$(pwd)/qdrant_storage:/qdrant/storage:z" \
-#     qdrant/qdrant
-#
 
 # Standard Library Imports
 from __future__ import annotations
@@ -47,6 +34,27 @@ from typing import (
     Union,
 )
 
+"""
+Adjusted from https://github.com/run-llama/llama_index/blob/main/llama-index-packs/llama-index-packs-raptor/llama_index/packs/raptor
+
+Full credits to the original authors!
+"""
+
+
+"""
+To use Qdrant locally, first install Docker from https://www.docker.com/get-started
+then run the following commands:
+
+docker pull qdrant/qdrant
+
+# start qdrant with persistence
+
+docker run -p 6333:6333 -p 6334:6334 \
+    -v "$(pwd)/qdrant_storage:/qdrant/storage:z" \
+    qdrant/qdrant
+
+This will start a Qdrant instance on localhost:6333 with data persisted in the qdrant_storage directory.
+"""
 
 # Environment Configuration
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -137,6 +145,20 @@ if not os.path.exists(DEFAULT_QDRANT_PERSIST_DIR):
     os.makedirs(DEFAULT_QDRANT_PERSIST_DIR)
 
 
+# ---------------------------------------------------------------------------
+# **CHANGED**: Shared TokenCountingHandler & CallbackManager for LLM+Embeddings
+# ---------------------------------------------------------------------------
+# Using ONE shared handler ensures token counts aggregate correctly across
+# LLM completions and embedding calls; the evaluator expects combined usage.
+TOKEN_HANDLER = TokenCountingHandler()  # **CHANGED**
+CALLBACK_MANAGER = CallbackManager(handlers=[TOKEN_HANDLER])  # **CHANGED**
+
+# 🔴 ADD THIS LINE — makes the handler global so internal components (like ResponseSynthesizer)
+# created by LlamaIndex also get instrumented automatically.
+from llama_index.core import Settings
+Settings.callback_manager = CALLBACK_MANAGER
+
+
 
 def create_default_llm(
     callback_manager: CallbackManager = None,
@@ -146,7 +168,7 @@ def create_default_llm(
 ) -> LLM:
 
     if callback_manager is None:
-        callback_manager = CallbackManager(handlers=[TokenCountingHandler()])
+        callback_manager = CALLBACK_MANAGER  # **CHANGED**
     _safety_settings = [
         types.SafetySetting(
             category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
@@ -177,7 +199,7 @@ def create_default_llm(
         model=model,
         temperature=temperature,
         max_retries=100,
-        callback_manager=callback_manager,
+        callback_manager=callback_manager,  # **CHANGED** (ensure shared CM is passed)
         generation_config=_gen_cfg,
         **kwargs,
     )
@@ -197,11 +219,11 @@ def create_default_embedding_model(
     Create a default embedding model.
     """
     if callback_manager is None:
-        callback_manager = CallbackManager(handlers=[TokenCountingHandler()])
+        callback_manager = CALLBACK_MANAGER  # **CHANGED**
     embed_model = GoogleGenAIEmbedding(
         model_name=model_name,
         embed_batch_size=embed_batch_size,
-        callback_manager=callback_manager,
+        callback_manager=callback_manager,  # **CHANGED** (ensure shared CM is passed)
         **kwargs,
     )
     print(
@@ -281,7 +303,7 @@ class SummaryModule(BaseModel):
         print(
             f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@LLM CALLED, generated {len(responses)} summaries. total docs: {total_docs}, total clusters: {total_clusters}"
         )
-        print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@ responses:", responses)
+        # print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@ responses:", responses)
         return [str(response) for response in responses]
 
 
@@ -345,7 +367,7 @@ def create_hvm(
     llm: Optional[LLM] = None,
     embed_model: Optional[BaseEmbedding] = None,
     transformations: Optional[List[TransformComponent]] = None,
-) -> HierarchicalVectorMemory:
+) -> "HierarchicalVectorMemory":
     if llm is None:
         llm = create_default_llm()
     summary_module = create_summary_module(llm=llm)
@@ -370,7 +392,7 @@ def create_hvm(
 
 
 class HierarchicalVectorMemory(BaseMemoryBlock[str]):
-    """Long‑term memory that stores every turn as a leaf node.
+    """Long-term memory that stores every turn as a leaf node.
     TreeIndex automatically builds a hierarchy above the leaves.
     Retrieval walks the hierarchy or uses the collapsed vector view, depending on `mode`.
     """
@@ -421,32 +443,31 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
         embed_handler = None
         try:
             llm_handlers = self.llm.callback_manager.handlers or []
-            llm_handler = next(
-                (h for h in llm_handlers if isinstance(h, TokenCountingHandler)), None
-            )
-            print(f"llm_handlers: {llm_handlers}")
-        except Exception as e:
+            llm_handler = next((h for h in llm_handlers if isinstance(h, TokenCountingHandler)), None)
+        except Exception:
             llm_handler = None
         try:
             embed_handlers = self.embed_model.callback_manager.handlers or []
-            embed_handler = next(
-                (h for h in embed_handlers if isinstance(h, TokenCountingHandler)),
-                None,
-            )
-            print(f"embed_handlers: {embed_handlers}")
-        except Exception as e:
+            embed_handler = next((h for h in embed_handlers if isinstance(h, TokenCountingHandler)), None)
+        except Exception:
             embed_handler = None
+
+        # ⚠️ If you want update_stats to be "read-only", DO NOT overwrite self.input_tokens/… here.
+        # If you do want absolute totals for debugging, store them under different attributes.
+        # Example (debug-only):
         if llm_handler:
-            self.input_tokens = llm_handler.prompt_llm_token_count
-            self.output_tokens = llm_handler.completion_llm_token_count
+            self._abs_llm_prompt_tokens = llm_handler.prompt_llm_token_count
+            self._abs_llm_completion_tokens = llm_handler.completion_llm_token_count
         if embed_handler:
-            self.embed_tokens = embed_handler.embedding_token_counts
+            self._abs_embed_tokens = getattr(embed_handler, "total_embedding_token_count", 0)
+
         print(
-            f"llm_handler: {llm_handler}, embed_handler: {embed_handler},llm: {self.llm}, embed_model: {self.embed_model}"
+            f"HVM stats (abs): prompt={getattr(self, '_abs_llm_prompt_tokens', 0)}, "
+            f"completion={getattr(self, '_abs_llm_completion_tokens', 0)}, "
+            f"embed={getattr(self, '_abs_embed_tokens', 0)}, "
+            f"load_time={self.load_chat_history_time:.2f}s, retrieval_time={self.retrieval_time:.2f}s"
         )
-        print(
-            f"HVM stats:\nInput tokens: {self.input_tokens}\nOutput tokens: {self.output_tokens}\nEmbed tokens: {self.embed_tokens}\nLoad time: {self.load_chat_history_time:.2f}s\nRetrieval time: {self.retrieval_time:.2f}s"
-        )
+
 
     async def _get_embeddings_per_level(self, level: int = 0) -> List[float]:
         """
@@ -468,71 +489,66 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
 
         return [x.node for x in source_nodes]
 
+    # inside class HierarchicalVectorMemory(BaseMemoryBlock[str]):
+
     async def _aput(self, messages: Optional[List[ChatMessage]], **kwargs) -> None:
         start_time = time.time()
-        if len(messages) == 0:
+        if not messages:
             print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@ No messages to store in HVM.")
             return
         print(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@ Storing {len(messages)} in HVM.")
         self.message_history.extend(messages)
 
-        def _chat_to_node(msg: ChatMessage) -> TextNode:
-            metadata = {
-                "role": msg.role,
-            }
-            return TextNode(
-                text=msg.content,
-                metadata=metadata,
-            )
-
-        documents: List[BaseNode] = (
-            [_chat_to_node(m) for m in messages] if messages else []
+        # --- count DELTAS from the SAME LLM that the summarizer actually uses ---
+        # Prefer the synthesizer's LLM (it is the one doing the summarization calls)
+        llm_for_summary = getattr(
+            getattr(self.summary_module, "response_synthesizer", None),
+            "llm",
+            self.llm,
         )
+        try:
+            llm_handlers = getattr(getattr(llm_for_summary, "callback_manager", None), "handlers", []) or []
+            llm_handler = next((h for h in llm_handlers if isinstance(h, TokenCountingHandler)), None)
+        except Exception:
+            llm_handler = None
+
+        try:
+            embed_handlers = getattr(getattr(self.embed_model, "callback_manager", None), "handlers", []) or []
+            embed_handler = next((h for h in embed_handlers if isinstance(h, TokenCountingHandler)), None)
+        except Exception:
+            embed_handler = None
+
+        p0 = llm_handler.prompt_llm_token_count if llm_handler else 0
+        c0 = llm_handler.completion_llm_token_count if llm_handler else 0
+        e0 = getattr(embed_handler, "total_embedding_token_count", 0) if embed_handler else 0
+        # ------------------------------------------------------------------------
+
+        def _chat_to_node(msg: ChatMessage) -> TextNode:
+            return TextNode(text=msg.content, metadata={"role": msg.role})
+
+        documents: List[BaseNode] = [_chat_to_node(m) for m in messages]
         embed_model = self.index._embed_model
         transformations = self.index._transformations
 
+        # Run any ingestion-time transformations
         cur_nodes = run_transformations(documents, transformations, in_place=False)
+
+        # Build hierarchy level by level
         for level in range(self.tree_depth):
-            # get the embeddings for the current documents
-
-            if self.verbose:
-                print(f"Generating embeddings for level {level}.")
-
+            # 1) Embed current nodes
             embeddings = await embed_model.aget_text_embedding_batch(
                 [node.get_content(metadata_mode="embed") for node in cur_nodes]
             )
             assert len(embeddings) == len(cur_nodes)
-            id_to_embedding = {
-                node.id_: embedding for node, embedding in zip(cur_nodes, embeddings)
-            }
+            id_to_embedding = {node.id_: emb for node, emb in zip(cur_nodes, embeddings)}
 
-            if self.verbose:
-                print(f"Performing clustering for level {level}.")
+            # 2) Cluster nodes (async)
+            nodes_per_cluster = await aget_clusters(cur_nodes, id_to_embedding)
 
-            # cluster the documents
-            # nodes_per_cluster = get_clusters(cur_nodes, id_to_embedding)
-            nodes_per_cluster = await aget_clusters(
-                cur_nodes,
-                id_to_embedding,
-                # max_length_in_cluster=10000,
-                # reduction_dimension=10,
-                # threshold=0.1,
-            )
+            # 3) Summarize each cluster using the synthesizer (this triggers LLM calls)
+            summaries_per_cluster = await self.summary_module.generate_summaries(nodes_per_cluster)
 
-            if self.verbose:
-                print(
-                    f"Generating summaries for level {level} with {len(nodes_per_cluster)} clusters."
-                )
-            summaries_per_cluster = await self.summary_module.generate_summaries(
-                nodes_per_cluster
-            )
-
-            if self.verbose:
-                print(
-                    f"Level {level} created summaries/clusters: {len(nodes_per_cluster)}"
-                )
-
-            # replace the current nodes with their summaries
+            # 4) Create new summary nodes for the next level
             new_nodes = [
                 TextNode(
                     text=summary,
@@ -543,8 +559,8 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
                 for summary in summaries_per_cluster
             ]
 
-            # insert the nodes with their embeddings and parent_id
-            nodes_with_embeddings = []
+            # 5) Insert child nodes with embeddings and parent links
+            nodes_with_embeddings: List[BaseNode] = []
             for cluster, summary_doc in zip(nodes_per_cluster, new_nodes):
                 for node in cluster:
                     node.metadata["parent_id"] = summary_doc.id_
@@ -552,17 +568,36 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
                     node.excluded_llm_metadata_keys.append("parent_id")
                     node.embedding = id_to_embedding[node.id_]
                     nodes_with_embeddings.append(node)
-            # print(f"Inserted {len(nodes_with_embeddings)} nodes into the index.")
-            print(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@ Inserting {len(nodes_with_embeddings)} nodes into the index at level {level}.{nodes_with_embeddings[0] if len(nodes_with_embeddings) > 0 else ''}")
+
+            print(
+                f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@ Inserting {len(nodes_with_embeddings)} nodes into the index at level {level}."
+            )
             await self.index.ainsert_nodes(nodes_with_embeddings)
 
-            # set the current nodes to the new nodes
+            # 6) Next level works on the summaries we just created
             cur_nodes = new_nodes
 
+        # Insert the top-level summaries as well
         await self.index.ainsert_nodes(cur_nodes)
-        end_time = time.time()
-        self.load_chat_history_time += end_time - start_time
-        self.update_stats()
+
+        # --- compute AFTER−BEFORE deltas and ACCUMULATE into memory counters ---
+        if llm_handler:
+            self.input_tokens  += max(0, llm_handler.prompt_llm_token_count     - p0)
+            self.output_tokens += max(0, llm_handler.completion_llm_token_count - c0)
+        if embed_handler:
+            e1 = getattr(embed_handler, "total_embedding_token_count", 0)
+            self.embed_tokens += max(0, e1 - e0)
+        # ------------------------------------------------------------------------
+
+        self.load_chat_history_time += time.time() - start_time
+
+        # Optional: keep as debug only; avoid overwriting per-question counters
+        try:
+            self.update_stats()
+        except Exception:
+            pass
+
+
 
     async def collapsed_retrieval(
         self, query_str: str, similarity_top_k: int
@@ -636,7 +671,8 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
         **kwargs,
     ) -> List[NodeWithScore]:
         """Retrieve nodes given query and mode."""
-        start_time = time.time()
+        import time  # local import to avoid module order issues
+        t0 = time.time()  # **CHANGED**
         if len(messages) == 0:
             return ""
         if last_n > 0:
@@ -658,8 +694,7 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
         res_str = ""
         for i, node in enumerate(res):
             res_str += f"<c_{i}>\n{node.node.text}\n</c_{i}>\n"
-        end_time = time.time()
-        self.retrieval_time += end_time - start_time
+        self.retrieval_time += (time.time() - t0)  # **CHANGED**
         self.update_stats()
         return res_str
 

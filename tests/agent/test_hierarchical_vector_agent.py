@@ -7,7 +7,7 @@ Run from repo root:
     python -m tests.agent.hvm_tree_demo
 """
 
-from asdrp.agent.hvm_agent import HVMAgent
+from asdrp.agent.hvm_agentOld import HVMAgent
 
 def main() -> None:
     agent = HVMAgent()

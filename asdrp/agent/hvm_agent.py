@@ -15,6 +15,7 @@ import os
 from typing import List, Optional
 import uuid
 import time
+
 from qdrant_client import QdrantClient, AsyncQdrantClient
 from asdrp.agent.base import AgentReply
 from llama_index.core.agent.workflow import FunctionAgent
@@ -24,7 +25,7 @@ from llama_index.core.llms import LLM
 from llama_index.core.embeddings import BaseEmbedding
 from llama_index.llms.google_genai import GoogleGenAI
 from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
-from asdrp.memory.hvm import (
+from asdrp.memory.hvm import (  # keep your existing module path
     HierarchicalVectorMemory,
     QueryModes,
     create_hvm,
@@ -36,6 +37,8 @@ from asdrp.memory.hvm import (
 from google.genai import types
 from dotenv import load_dotenv, find_dotenv
 from llama_index.core.base.llms.types import ChatMessage
+from asdrp.agent.base import AgentBase
+
 load_dotenv(find_dotenv())
 
 
@@ -78,23 +81,31 @@ def get_cost_per_1k_tokens(
     return pricing.get(token_type, 0.0)
 
 
-class HVMAgent:
+class HVMAgent(AgentBase):
     """Conversational agent that uses hierarchical vector memory."""
+
+    @property
+    def can_batch(self):
+        return True
+    
+    @property
+    def batch_all(self):
+        return True
 
     def __init__(
         self,
         q_client: AsyncQdrantClient,
         llm: Optional[LLM] = None,
-        embed_model: Optional[LLM] = None,
+        embed_model: Optional[BaseEmbedding] = None,  # **CHANGED** (type fix)
         top_k: int = 2,
-        retrieval_mode: QueryModes = QueryModes.tree_traversal,  # default to tree_traversal
+        retrieval_mode: QueryModes = QueryModes.tree_traversal,  # **CHANGED** (typo fix)
         tools: Optional[List[FunctionTool]] = None,
         session_id: Optional[str] = None,
     ) -> None:
         self.tools = tools or []
 
         # Configuration so memory reset can rebuild identical state
-        self.llm = llm or create_default_llm()
+        self.llm = llm or create_default_llm()  # uses shared Token handler in hvm.py
         self.embed_model = embed_model or create_default_embedding_model()
         self.top_k = top_k
         self.retrieval_mode = retrieval_mode
@@ -127,6 +138,10 @@ class HVMAgent:
     def reset_session(self, new_session_id: Optional[str] = None) -> None:
         """Reset the agent's session, optionally with a new session ID."""
         self.collection = new_session_id or f"agent_mem_hvm_{uuid.uuid4().hex}"
+        # Optionally reset per-question counters here if desired:
+        # self.query_input_tokens = 0
+        # self.query_output_tokens = 0
+        # self.query_time = 0
 
     @property
     def memory_block(self) -> HierarchicalVectorMemory:
@@ -163,22 +178,24 @@ class HVMAgent:
             "Assistant:"
         )
 
-        # Retrieve relevant snippets from memory (TreeIndex retriever uses sync LLM internally → run off loop)
+        # ------------------------------
+        # **CHANGED**: measure query time
+        # ------------------------------
+        initial_query_time = time.time()  # **CHANGED**
 
-        # Track time
-        initial_query_time = time.time()
-
-        # Token deltas baseline
-        handler = None
+        # --------------------------------------------------------------------
+        # **CHANGED**: Snapshot TokenCountingHandler totals BEFORE the LLM call
+        # --------------------------------------------------------------------
+        handler = None  # **CHANGED**
         try:
-            handlers = getattr(self.llm.callback_manager, "handlers", []) or []
+            handlers = getattr(self.llm.callback_manager, "handlers", []) or []  # **CHANGED**
             handler = next(
-                (h for h in handlers if isinstance(h, TokenCountingHandler)), None
+                (h for h in handlers if isinstance(h, TokenCountingHandler)), None  # **CHANGED**
             )
         except Exception:
-            handler = None
-        p0 = handler.prompt_llm_token_count if handler else 0
-        c0 = handler.completion_llm_token_count if handler else 0
+            handler = None  # **CHANGED**
+        p0 = handler.prompt_llm_token_count if handler else 0  # **CHANGED**
+        c0 = handler.completion_llm_token_count if handler else 0  # **CHANGED**
 
         # Ask the LLM for a completion (native async)
         print(f"Prompt to LLM:\n{prompt}\n")
@@ -189,16 +206,22 @@ class HVMAgent:
             else str(assistant_msg)
         )
 
-        # Track tokens and time (prefer handler deltas; fallback to tokenizer)
-        if handler:
-            self.query_input_tokens += max(0, handler.prompt_llm_token_count - p0)
-            self.query_output_tokens += max(0, handler.completion_llm_token_count - c0)
-        else:
-            self.query_input_tokens += len(self.tokenizer.encode(prompt))
-            self.query_output_tokens += len(self.tokenizer.encode(assistant_msg))
-        self.query_time = time.time() - initial_query_time
+        # -------------------------------------------------------------------
+        # **CHANGED**: Compute token deltas (prefer handler; fallback tokenizer)
+        # -------------------------------------------------------------------
+        if handler:  # **CHANGED**
+            self.query_input_tokens += max(0, handler.prompt_llm_token_count - p0)   # **CHANGED**
+            self.query_output_tokens += max(0, handler.completion_llm_token_count - c0)  # **CHANGED**
+        else:  # **CHANGED**
+            self.query_input_tokens += len(self.tokenizer.encode(prompt))  # **CHANGED**
+            self.query_output_tokens += len(self.tokenizer.encode(assistant_msg))  # **CHANGED**
 
-        # Store the turn to memory
+        # ------------------------------
+        # **CHANGED**: finalize query time
+        # ------------------------------
+        self.query_time = time.time() - initial_query_time  # **CHANGED**
+
+        # Store the turn to memory (this will count into memory-block ingest tokens)
         await self.memory.aput(
             [
                 ChatMessage(role="user", content=user_msg),
@@ -222,24 +245,26 @@ async def run_smoke_test():
         )
         print(f"Successfully loaded dataset with {len(dataset)} items")
 
-        # Print first item keys to show structure
-        # if dataset:
-        #     print(f"First item keys: {list(dataset[0].keys())}")
-
     except FileNotFoundError as e:
         print(f"Dataset file not found: {e}")
         raise e
     except Exception as e:
         print(f"Error loading dataset: {e}")
         raise e
+
     print("Running smoke test...")
     print(f"Dataset contains {len(dataset)} items.")
     base_session_id = "test_hvm_session" + str(uuid.uuid4().hex)
     q_client = create_qdrant_client()
+
+    # --------------------------------------------------------------------
+    # **CHANGED**: use create_default_llm() without overriding callback_manager
+    # so it shares the global TokenCountingHandler with embeddings (from hvm)
+    # --------------------------------------------------------------------
     hvm_agent = HVMAgent(
         q_client=q_client,
-        llm=create_default_llm(callback_manager=CallbackManager([])),
-        embed_model=create_default_embedding_model(),
+        llm=create_default_llm(),                    # **CHANGED** (remove CallbackManager([]))
+        embed_model=create_default_embedding_model(),# **CHANGED**
         top_k=1,
         retrieval_mode=QueryModes.tree_traversal,
         tools=[],
@@ -281,15 +306,28 @@ async def run_smoke_test():
                         raise ValueError(f"Unknown role: {turn['role']}")
                     buffer.append(msg)
                 await hvm_agent.memory.aput(buffer)
-                # print(f"Inserted haystack session with {len(buffer)} turns into HVM.")
                 total_turn += len(buffer)
             print(
                 f"Inserted all haystack sessions into HVM. Total turns inserted for this question: {total_turn}"
             )
+
             response = await hvm_agent.achat(question)
             print(f"Question: {question}")
             print(f"Retrieved context from HVM.\n{response}")
             print(f"Answer: {answer}")
+
+            # Optional: print per-question agent token/time counters
+            print(
+                f"[Agent Query Stats] prompt={hvm_agent.query_input_tokens}, "
+                f"completion={hvm_agent.query_output_tokens}, time={hvm_agent.query_time:.3f}s"
+            )
+            print(
+                f"[Memory Load Stats] prompt={hvm_agent.memory.input_tokens}, "
+                f"completion={hvm_agent.memory.output_tokens}, "
+                f"embed={hvm_agent.memory.embed_tokens}, "
+                f"load_time={hvm_agent.memory.load_chat_history_time:.3f}s"
+            )
+
     finally:
         print("Closing HVM...")
 
