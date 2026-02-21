@@ -1,0 +1,1007 @@
+diff --git a/asdrp/agent/hvm_agent.py b/asdrp/agent/hvm_agent.py
+index 76195f6..9de20e5 100644
+--- a/asdrp/agent/hvm_agent.py
++++ b/asdrp/agent/hvm_agent.py
+@@ -33,6 +33,7 @@ from asdrp.memory.hvm import (  # keep your existing module path
+     create_default_embedding_model,
+     data_loader,
+     create_qdrant_client,
++    get_token_count_handler,
+ )
+ from google.genai import types
+ from dotenv import load_dotenv, find_dotenv
+@@ -87,7 +88,7 @@ class HVMAgent(AgentBase):
+     @property
+     def can_batch(self):
+         return True
+-    
++
+     @property
+     def batch_all(self):
+         return True
+@@ -96,8 +97,9 @@ class HVMAgent(AgentBase):
+         self,
+         q_client: AsyncQdrantClient,
+         llm: Optional[LLM] = None,
+-        embed_model: Optional[BaseEmbedding] = None,  # **CHANGED** (type fix)
+-        top_k: int = 2,
++        memory_llm: Optional[LLM] = None,
++        memory_embed_model: Optional[BaseEmbedding] = None,  # **CHANGED** (type fix)
++        top_k: int = 3,
+         retrieval_mode: QueryModes = QueryModes.tree_traversal,  # **CHANGED** (typo fix)
+         tools: Optional[List[FunctionTool]] = None,
+         session_id: Optional[str] = None,
+@@ -106,7 +108,8 @@ class HVMAgent(AgentBase):
+ 
+         # Configuration so memory reset can rebuild identical state
+         self.llm = llm or create_default_llm()  # uses shared Token handler in hvm.py
+-        self.embed_model = embed_model or create_default_embedding_model()
++        self.memory_llm = memory_llm or create_default_llm()
++        self.memory_embed_model = memory_embed_model or create_default_embedding_model()
+         self.top_k = top_k
+         self.retrieval_mode = retrieval_mode
+ 
+@@ -138,6 +141,7 @@ class HVMAgent(AgentBase):
+     def reset_session(self, new_session_id: Optional[str] = None) -> None:
+         """Reset the agent's session, optionally with a new session ID."""
+         self.collection = new_session_id or f"agent_mem_hvm_{uuid.uuid4().hex}"
++        print(f"Session reset. New collection: {self.collection}")
+         # Optionally reset per-question counters here if desired:
+         # self.query_input_tokens = 0
+         # self.query_output_tokens = 0
+@@ -156,8 +160,8 @@ class HVMAgent(AgentBase):
+                 collection_name=self.collection,
+                 client=self.q_client,
+                 tree_depth=3,
+-                llm=self.llm,
+-                embed_model=self.embed_model,
++                llm=self.memory_llm,
++                embed_model=self.memory_embed_model,
+                 transformations=None,
+             )
+         return self.memory_block_map[self.collection]
+@@ -183,19 +187,12 @@ class HVMAgent(AgentBase):
+         # ------------------------------
+         initial_query_time = time.time()  # **CHANGED**
+ 
+-        # --------------------------------------------------------------------
+-        # **CHANGED**: Snapshot TokenCountingHandler totals BEFORE the LLM call
+-        # --------------------------------------------------------------------
+-        handler = None  # **CHANGED**
+-        try:
+-            handlers = getattr(self.llm.callback_manager, "handlers", []) or []  # **CHANGED**
+-            handler = next(
+-                (h for h in handlers if isinstance(h, TokenCountingHandler)), None  # **CHANGED**
+-            )
+-        except Exception:
+-            handler = None  # **CHANGED**
+-        p0 = handler.prompt_llm_token_count if handler else 0  # **CHANGED**
+-        c0 = handler.completion_llm_token_count if handler else 0  # **CHANGED**
++        token_count_handler = get_token_count_handler(self.llm)
++        assert (
++            token_count_handler is not None
++        ), "TokenCountingHandler not found in LLM's CallbackManager"
++        p0 = token_count_handler.prompt_llm_token_count
++        c0 = token_count_handler.completion_llm_token_count
+ 
+         # Ask the LLM for a completion (native async)
+         print(f"Prompt to LLM:\n{prompt}\n")
+@@ -209,17 +206,22 @@ class HVMAgent(AgentBase):
+         # -------------------------------------------------------------------
+         # **CHANGED**: Compute token deltas (prefer handler; fallback tokenizer)
+         # -------------------------------------------------------------------
+-        if handler:  # **CHANGED**
+-            self.query_input_tokens += max(0, handler.prompt_llm_token_count - p0)   # **CHANGED**
+-            self.query_output_tokens += max(0, handler.completion_llm_token_count - c0)  # **CHANGED**
+-        else:  # **CHANGED**
+-            self.query_input_tokens += len(self.tokenizer.encode(prompt))  # **CHANGED**
+-            self.query_output_tokens += len(self.tokenizer.encode(assistant_msg))  # **CHANGED**
++        self.query_input_tokens += max(
++            0, token_count_handler.prompt_llm_token_count - p0
++        )  # **CHANGED**
++        self.query_output_tokens += max(
++            0, token_count_handler.completion_llm_token_count - c0
++        )  # **CHANGED**
+ 
+         # ------------------------------
+         # **CHANGED**: finalize query time
+         # ------------------------------
+         self.query_time = time.time() - initial_query_time  # **CHANGED**
++        print(
++            f"Agent query time: {self.query_time:.3f}s, "
++            f"input tokens: {self.query_input_tokens}, "
++            f"output tokens: {self.query_output_tokens}"
++        )
+ 
+         # Store the turn to memory (this will count into memory-block ingest tokens)
+         await self.memory.aput(
+@@ -242,7 +244,7 @@ async def run_smoke_test():
+         # dataset = data_loader("longmemeval_single_500.json")
+         dataset = data_loader(
+             "/Users/judyyu/memagents/asdrp/eval/data/custom_history/longmemeval_m_sample5_20.json"
+-        )
++                    )
+         print(f"Successfully loaded dataset with {len(dataset)} items")
+ 
+     except FileNotFoundError as e:
+@@ -263,8 +265,9 @@ async def run_smoke_test():
+     # --------------------------------------------------------------------
+     hvm_agent = HVMAgent(
+         q_client=q_client,
+-        llm=create_default_llm(),                    # **CHANGED** (remove CallbackManager([]))
+-        embed_model=create_default_embedding_model(),# **CHANGED**
++        llm=create_default_llm(),  # **CHANGED** (remove CallbackManager([]))
++        memory_llm=create_default_llm(),  # **CHANGED**
++        memory_embed_model=create_default_embedding_model(),  # **CHANGED**
+         top_k=1,
+         retrieval_mode=QueryModes.tree_traversal,
+         tools=[],
+@@ -290,9 +293,10 @@ async def run_smoke_test():
+             )
+ 
+             total_turn = 0
++            buffer = []
+             for idx, session in enumerate(haystack_sessions):
+                 print(f"Processing haystack session {idx} with {len(session)} turns.")
+-                buffer = []
++
+                 for turn in session:
+                     content = turn["content"].replace(
+                         "<|endoftext|>", ""
+@@ -305,11 +309,18 @@ async def run_smoke_test():
+                     else:
+                         raise ValueError(f"Unknown role: {turn['role']}")
+                     buffer.append(msg)
+-                await hvm_agent.memory.aput(buffer)
+-                total_turn += len(buffer)
++            await hvm_agent.memory.aput(buffer)
++            total_turn += len(buffer)
+             print(
+                 f"Inserted all haystack sessions into HVM. Total turns inserted for this question: {total_turn}"
+             )
++            print(
++                f"before question agent token/time counters:"
++                f"[Memory Load Stats] prompt={hvm_agent.memory.input_tokens}, "
++                f"completion={hvm_agent.memory.output_tokens}, "
++                f"embed={hvm_agent.memory.embed_tokens}, "
++                f"load_time={hvm_agent.memory.load_chat_history_time:.3f}s"
++            )
+ 
+             response = await hvm_agent.achat(question)
+             print(f"Question: {question}")
+@@ -322,6 +333,7 @@ async def run_smoke_test():
+                 f"completion={hvm_agent.query_output_tokens}, time={hvm_agent.query_time:.3f}s"
+             )
+             print(
++                f"after question agent token/time counters:"
+                 f"[Memory Load Stats] prompt={hvm_agent.memory.input_tokens}, "
+                 f"completion={hvm_agent.memory.output_tokens}, "
+                 f"embed={hvm_agent.memory.embed_tokens}, "
+diff --git a/asdrp/evaluate_agents_wcost.py b/asdrp/evaluate_agents_wcost.py
+index 395f88d..e6186b0 100644
+--- a/asdrp/evaluate_agents_wcost.py
++++ b/asdrp/evaluate_agents_wcost.py
+@@ -70,6 +70,9 @@ INPUT_COST_PER_1K = (
+ OUTPUT_COST_PER_1K = (
+     0.00040  # Cost per 1000 output tokens ($)   [$0.40 * (1000/1000000)]
+ )
++EMBEDDING_VECTOR_COST_PER_1K = (
++    0.00000  # Cost per 1000 embedding tokens ($)   [$0.10 * (1000/1000000)]
++)
+ 
+ # Retry configuration for rate-limit handling
+ RETRY_ATTEMPTS = 8  # Maximum number of retry attempts on errors
+@@ -142,23 +145,6 @@ async def load_chat_history(agent_object, haystack_sessions):
+     )  # ReductiveAgent can accept batched user-assistant pairs without its quality being negatively affected
+     batch_all = isinstance(agent_object, HVMAgent)
+     all_messages = []  # Used only if batch_all is True
+-
+-    async def _flush_hvm_batch(force: bool = False):
+-        """Flush accumulated turns for HVMAgent in manageable chunks."""
+-        nonlocal all_messages
+-        # Only HVMAgent uses this path
+-        if not batch_all:
+-            return
+-        while (len(all_messages) >= MAX_HVM_BATCH_MESSAGES) or (
+-            force and len(all_messages) > 0
+-        ):
+-            chunk = all_messages[:MAX_HVM_BATCH_MESSAGES]
+-            all_messages = all_messages[MAX_HVM_BATCH_MESSAGES:]
+-            print(
+-                f"Flushing {len(chunk)} batched HVM turns "
+-                f"(remaining buffered: {len(all_messages)})..."
+-            )
+-            await _retry_aput(memory_block, chunk)
+     session_count = 0
+     turn_count = 0
+     for session in haystack_sessions:
+@@ -189,7 +175,6 @@ async def load_chat_history(agent_object, haystack_sessions):
+             if batch_all:
+                 if msg is not None:
+                     all_messages.append(msg)
+-                    await _flush_hvm_batch()
+             else:
+                 if can_batch:
+                     buffer.append(
+@@ -216,71 +201,70 @@ async def load_chat_history(agent_object, haystack_sessions):
+         # End of session: flush any leftover buffered pairs for batched memory blocks
+         if can_batch and buffer and not batch_all:
+             await _retry_aput(memory_block, buffer)
+-    if batch_all:
+-        await _flush_hvm_batch(force=True)
+-
+-APUT_TIMEOUT_SECS = 120
+-MAX_HVM_BATCH_MESSAGES = 250  # limit turns per aput for HVMAgent to avoid long ingests, 
++    if batch_all and all_messages:
++        print(
++            f"Flushing all {len(all_messages)} messages (total turns: {turn_count}) to memory in one batch..."
++        )
++        await _retry_aput(memory_block, all_messages)
+ 
+ 
+-async def _retry_aput(memory_block, buffer, summarize=None):
++async def _retry_aput(memory_block, buffer):
+     last_exc = None
+     for attempt in range(1, RETRY_ATTEMPTS + 1):
+         try:
+-            # HARD TIMEOUT around the ingest
+-            if summarize is None:
+-                await asyncio.wait_for(memory_block._aput(buffer), timeout=APUT_TIMEOUT_SECS)
+-            else:
+-                await asyncio.wait_for(memory_block._aput(buffer, summarize=summarize), timeout=APUT_TIMEOUT_SECS)
++            await memory_block._aput(buffer)
+             last_exc = None
+             break
+-
+-        except asyncio.TimeoutError as e:
+-            last_exc = e
+-            delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
+-            delay *= random.uniform(0.8, 1.2)
+-            print(f"[aput] Timeout after {APUT_TIMEOUT_SECS}s (attempt {attempt}/{RETRY_ATTEMPTS}). Backing off {delay:.1f}s...")
+-            await asyncio.sleep(delay)
+-            continue
+-
+-        except (ClientConnectorError, OSError) as e:
+-            last_exc = e
+-            delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
+-            delay *= random.uniform(0.8, 1.2)
+-            print(f"[aput] Connect error {type(e).__name__} (attempt {attempt}/{RETRY_ATTEMPTS}): {e}. Backing off {delay:.1f}s...")
+-            await asyncio.sleep(delay)
+-            continue
+-
+-        except ClientError as e:
+-            print(f"[aput] ClientError (attempt {attempt}): {e}")
++        except ClientError as e:  # <-- explicitly catch Gemini API errors
++            print(f"ClientError caught (attempt {attempt}): {e}")
+             last_exc = e
+             if getattr(e, "status", None) in [502, 503, 504]:
+                 delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
+-                delay *= random.uniform(0.8, 1.2)
+-                print(f"[aput] Transient {e.status}, backoff {delay:.1f}s...")
++                delay *= random.uniform(0.8, 1.2)  # add ±20% jitter
++                print(f"Transient server error {e.status}, backing off {delay}s...")
+                 await asyncio.sleep(delay)
+                 continue
+             raise
+ 
++        except RuntimeError as e:
++            # specifically catch Gemini’s “Response was terminated early: MAX_TOKENS”
++            print(f"Gemini hit content issue (attempt {attempt}): {e}")
++            last_exc = e
++            if "MAX_TOKENS" in str(e) or "PROHIBITED_CONTENT" in str(e):
++                # delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
++                delay = min(
++                    RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY - 5
++                )
++                delay = delay * random.uniform(0.8, 1.2)  # add ±20% jitter
++                print(f"Backing off {delay}s before retry...")
++                await asyncio.sleep(delay)
++                continue
++            raise  # different RuntimeError
++
+         except ValueError as e:
++            print(f"No candidates detected (attempt {attempt}): {e}")
+             last_exc = e
+             if "no candidates" in str(e):
+-                delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY + 10)
+-                delay *= random.uniform(0.8, 1.2)
+-                print(f"[aput] No candidates, backoff {delay:.1f}s...")
++                delay = min(
++                    RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY + 10
++                )
++                delay = delay * random.uniform(0.8, 1.2)  # add ±20% jitter
++                print(f"Backing off {delay}s before retry...")
+                 await asyncio.sleep(delay)
+                 continue
+-            raise
++            raise  # different RuntimeError
+ 
+         except Exception as e:
++            print(f"Error processing buffered turns (attempt {attempt}): {e}")
++            traceback.print_exc()
+             last_exc = e
+             if "Rate limit" in str(e) or "429" in str(e):
++                # delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                 delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
+-                delay *= random.uniform(0.8, 1.2)
+-                print(f"[aput] RateLimit, backoff {delay:.1f}s...")
++                delay = delay * random.uniform(0.8, 1.2)  # add ±20% jitter
++                print(f"RateLimit detected, backing off {delay}s before retry...")
+                 await asyncio.sleep(delay)
+                 continue
+-            print(f"[aput] Non-retryable error: {e}")
+             raise
+     if last_exc is not None:
+         raise last_exc
+@@ -304,8 +288,10 @@ def reset_memory(agent_object):
+             agent_object.memory, []
+         )  # Resets agent
+ 
++
+ EVAL_BATCH_SIZE = 25  # Number of questions to process in parallel
+ 
++
+ class LongMemEvalRunner:
+     """
+     Class to attain a JSON file of questions from the LongMemEval dataset, hypotheses from agents/memoryblocks, and associated results
+@@ -313,6 +299,8 @@ class LongMemEvalRunner:
+     """
+ 
+     def __init__(self, agent):
++        self.session_id = "run_" + str(uuid.uuid4())
++        print(f"Starting evaluation session: {self.session_id}")
+         self.agent = agent
+         if agent is HVMAgent:
+             self.q_client = create_qdrant_client()
+@@ -351,7 +339,9 @@ class LongMemEvalRunner:
+         # Reset agent memory for this question
+         if self.agent is HVMAgent:
+             agent_object = create_agent(self.agent, q_client=self.q_client)
+-            agent_object.reset_session(question.get("question_id", "unknown"))
++            agent_object.reset_session(
++                self.session_id + "_" + question.get("question_id", "unknown")
++            )
+         else:
+             agent_object = create_agent(self.agent)
+         print("Memory reset, processing chat history...")
+@@ -373,6 +363,10 @@ class LongMemEvalRunner:
+             lch_output_tokens = (
+                 agent_object.memory_block.output_tokens
+             )  # Number of tokens returned by the LLM response while parsing haystack_sessions
++            try:
++                lch_embed_tokens = agent_object.memory_block.embed_tokens
++            except AttributeError:
++                lch_embed_tokens = 0
+             lch_time = (
+                 agent_object.memory_block.load_chat_history_time
+             )  # Duration of time the LLM took to parse the haystack_sessions
+@@ -380,6 +374,7 @@ class LongMemEvalRunner:
+             lch_cost = (lch_input_tokens / 1000.0) * INPUT_COST_PER_1K + (
+                 lch_output_tokens / 1000.0
+             ) * OUTPUT_COST_PER_1K  # Calculates real-world cost
++            +(lch_embed_tokens / 1000.0) * EMBEDDING_VECTOR_COST_PER_1K
+ 
+             # Retry mechanism for rate-limit errors
+             last_exc = None
+@@ -457,6 +452,7 @@ class LongMemEvalRunner:
+         overall_output_tokens = (
+             lch_output_tokens + query_output_tokens
+         )  # Total amount of tokens "returned" by the agent/memory pair
++        overall_embed_tokens = lch_embed_tokens  # Total amount of embedding tokens used by the memory block
+         overall_cost = (
+             lch_cost + query_cost
+         )  # Total real-world cost of the question/context
+@@ -469,6 +465,7 @@ class LongMemEvalRunner:
+             "hypothesis": answer_text,
+             "memory_input_tokens": lch_input_tokens,
+             "memory_output_tokens": lch_output_tokens,
++            "memory_embed_tokens": lch_embed_tokens,
+             "memory_cost": lch_cost,
+             "memory_time": lch_time,
+             "query_input_tokens": query_input_tokens,
+@@ -652,6 +649,9 @@ class LongMemEvalRunner:
+         total_memory_output_tokens = sum(
+             r.get("memory_output_tokens", 0) for r in results
+         )
++        total_memory_embed_tokens = sum(
++            r.get("memory_embed_tokens", 0) for r in results
++        )
+         total_memory_cost = sum(r.get("memory_cost", 0.00) for r in results)
+ 
+         total_query_input_tokens = sum(r.get("query_input_tokens", 0) for r in results)
+@@ -682,6 +682,7 @@ class LongMemEvalRunner:
+         summary = {
+             "memory_loading_prompt_tokens": total_memory_input_tokens,
+             "memory_loading_completion_tokens": total_memory_output_tokens,
++            "memory_loading_embedding_tokens": total_memory_embed_tokens,
+             "memory_loading_cost": total_memory_cost,
+             "query_prompt_tokens": total_query_input_tokens,
+             "query_completion_tokens": total_query_output_tokens,
+@@ -780,6 +781,9 @@ def main(data_file, output_file, summary_file):
+ 
+ 
+ if __name__ == "__main__":
++    # print start time
++    start_time = time.time()
++    print(f"Starting evaluation at {time.strftime('%Y-%m-%d %H:%M:%S')}...")
+     # Get the directory where this script lives
+     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ 
+@@ -825,15 +829,30 @@ if __name__ == "__main__":
+     #         output_file=output_file,
+     #         summary_file=summary_file,
+     #     )
+-    data_file = os.path.join(
+-        BASE_DIR,
+-        "eval",
+-        "data",
+-        "custom_history",
+-        "longmemeval_m_sample5_20.json",
+-    )
++    # problem_id = "e56a43b9"
++    # data_file = os.path.join(
++    #     BASE_DIR,
++    #     "eval",
++    #     "data",
++    #     "custom_history",
++    #     "longmemeval_m_500_500_splite_10files",
++    #     "longmemeval_m_cleaned_part_01_split",
++    #     f"{problem_id}.json",
++    # )
++    # main(
++    #     data_file,
++    #     output_file=f"response_{problem_id}.json",
++    #     summary_file=f"summary_{problem_id}.json",
++    # )
++
++    # file = "longmemeval_m_cleaned_part_10.json"
++    file = "longmemeval_m_5_20.json"
+     main(
+-        data_file,
+-        output_file="hvm_agent_responses_m_cleaned_part_01.json",
+-        summary_file="hvm_agent_summary_m_cleaned_part_01.json",
++        # data_file=f"/Users/judyyu/memagents/asdrp/eval/data/custom_history/longmemeval_m_50_500_split/{file}",
++        data_file=f"/Users/judyyu/memagents/asdrp/eval/data/custom_history/{file}",
++        output_file=f"response_{file.replace('.json', '')}_1.json",
++        summary_file=f"summary_{file.replace('.json', '')}_1.json",
+     )
++    print(f"Evaluation completed at {time.strftime('%Y-%m-%d %H:%M:%S')}")
++    end_time = time.time()
++    print(f"Total evaluation time: {end_time - start_time:.2f} seconds")
+diff --git a/asdrp/memory/__init__.py b/asdrp/memory/__init__.py
+index f724554..b11bae7 100644
+--- a/asdrp/memory/__init__.py
++++ b/asdrp/memory/__init__.py
+@@ -1 +1 @@
+-from .hvm import HierarchicalVectorMemory
++# from .hvm import HierarchicalVectorMemory
+diff --git a/asdrp/memory/hvm.py b/asdrp/memory/hvm.py
+index aa7f060..631a89d 100644
+--- a/asdrp/memory/hvm.py
++++ b/asdrp/memory/hvm.py
+@@ -9,8 +9,6 @@
+ #############################################################################
+ 
+ 
+-
+-
+ # Standard Library Imports
+ from __future__ import annotations
+ import os
+@@ -60,7 +58,6 @@ This will start a Qdrant instance on localhost:6333 with data persisted in the q
+ warnings.filterwarnings("ignore", category=FutureWarning)
+ 
+ 
+-
+ # Math / ML / Data Libraries
+ import numba
+ import numpy as np
+@@ -69,8 +66,6 @@ from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
+ from sklearn.preprocessing import StandardScaler
+ 
+ 
+-
+-
+ # LlamaIndex Core Components
+ from llama_index.core import (
+     get_tokenizer,
+@@ -131,6 +126,8 @@ DEFAULT_SUMMARY_PROMPT = (
+     "Summarize the provided text, including as many key details as needed."
+ )
+ 
++DEFAULT_SAFETY_PROMPT = "Ensure the generated content adheres to safety guidelines and does not contain harmful or inappropriate material."
++
+ 
+ BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ 
+@@ -145,30 +142,18 @@ if not os.path.exists(DEFAULT_QDRANT_PERSIST_DIR):
+     os.makedirs(DEFAULT_QDRANT_PERSIST_DIR)
+ 
+ 
+-# ---------------------------------------------------------------------------
+-# **CHANGED**: Shared TokenCountingHandler & CallbackManager for LLM+Embeddings
+-# ---------------------------------------------------------------------------
+-# Using ONE shared handler ensures token counts aggregate correctly across
+-# LLM completions and embedding calls; the evaluator expects combined usage.
+-TOKEN_HANDLER = TokenCountingHandler()  # **CHANGED**
+-CALLBACK_MANAGER = CallbackManager(handlers=[TOKEN_HANDLER])  # **CHANGED**
+-
+-# 🔴 ADD THIS LINE — makes the handler global so internal components (like ResponseSynthesizer)
+-# created by LlamaIndex also get instrumented automatically.
+-from llama_index.core import Settings
+-Settings.callback_manager = CALLBACK_MANAGER
+-
+-
+-
+ def create_default_llm(
+     callback_manager: CallbackManager = None,
+     model="gemini-2.5-flash-lite",
+-    temperature: float = 0.2,
++    temperature: float = 0,
++    max_output_tokens: int = 1024 * 8,
+     **kwargs,
+ ) -> LLM:
+ 
+     if callback_manager is None:
+-        callback_manager = CALLBACK_MANAGER  # **CHANGED**
++        callback_manager = CallbackManager(
++            handlers=[TokenCountingHandler()]
++        )  # **CHANGED**
+     _safety_settings = [
+         types.SafetySetting(
+             category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+@@ -198,6 +183,7 @@ def create_default_llm(
+     llm = GoogleGenAI(
+         model=model,
+         temperature=temperature,
++        max_output_tokens=max_output_tokens,
+         max_retries=100,
+         callback_manager=callback_manager,  # **CHANGED** (ensure shared CM is passed)
+         generation_config=_gen_cfg,
+@@ -205,13 +191,14 @@ def create_default_llm(
+     )
+     print("llm.callback_manager.handlers:", llm.callback_manager.handlers)
+     print("llm:", llm)
++    token_handler = get_token_count_handler(llm)
++    print("llm token_handler:", token_handler)
+     return llm
+ 
+ 
+-
+ def create_default_embedding_model(
+     model_name: str = "text-embedding-004",
+-    embed_batch_size: int = 100,
++    embed_batch_size: int = 50,
+     callback_manager: CallbackManager = None,
+     **kwargs,
+ ):
+@@ -219,7 +206,9 @@ def create_default_embedding_model(
+     Create a default embedding model.
+     """
+     if callback_manager is None:
+-        callback_manager = CALLBACK_MANAGER  # **CHANGED**
++        callback_manager = CallbackManager(
++            handlers=[TokenCountingHandler()]
++        )  # **CHANGED**
+     embed_model = GoogleGenAIEmbedding(
+         model_name=model_name,
+         embed_batch_size=embed_batch_size,
+@@ -230,9 +219,31 @@ def create_default_embedding_model(
+         "embed_model.callback_manager.handlers:", embed_model.callback_manager.handlers
+     )
+     print("embed_model:", embed_model)
++    token_handler = get_token_count_handler(embed_model)
++    print("embed_model token_handler:", token_handler)
+     return embed_model
+ 
+ 
++def get_token_count_handler(
++    llm_or_embedding_model: Union[LLM, GoogleGenAIEmbedding],
++) -> TokenCountingHandler:
++    """
++    Get the TokenCountingHandler from the LLM or embedding model's callback manager.
++    """
++    try:
++        handlers = llm_or_embedding_model.callback_manager.handlers or []
++        token_handlers = []
++        for h in handlers:
++            if isinstance(h, TokenCountingHandler):
++                token_handlers.append(h)
++        print("Number of TokenCountingHandlers found:", len(token_handlers))
++        token_handler = next(
++            (h for h in handlers if isinstance(h, TokenCountingHandler)), None
++        )
++        return token_handler
++    except Exception:
++        return None
++
+ 
+ class QueryModes(str, Enum):
+     """Query modes."""
+@@ -241,7 +252,6 @@ class QueryModes(str, Enum):
+     collapsed = "collapsed"
+ 
+ 
+-
+ class SummaryModule(BaseModel):
+     response_synthesizer: BaseSynthesizer = Field(description="LLM")
+     summary_prompt: str = Field(
+@@ -263,7 +273,10 @@ class SummaryModule(BaseModel):
+         num_workers: int = 4,
+     ) -> None:
+         response_synthesizer = get_response_synthesizer(
+-            response_mode="tree_summarize", use_async=True, llm=llm
++            response_mode="tree_summarize",
++            use_async=True,
++            llm=llm,
++            callback_manager=llm.callback_manager if llm else None,
+         )
+         super().__init__(
+             response_synthesizer=response_synthesizer,
+@@ -296,25 +309,61 @@ class SummaryModule(BaseModel):
+         lock = asyncio.Semaphore(self.num_workers)
+         responses = []
+ 
+-        # run the jobs while limiting the number of concurrent jobs to num_workers
+-        for job in jobs:
+-            async with lock:
+-                responses.append(await job)
+-        print(
+-            f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@LLM CALLED, generated {len(responses)} summaries. total docs: {total_docs}, total clusters: {total_clusters}"
+-        )
++        async def run_job_with_retry(
++            job, cluster_idx: int, max_retries: int = 2
++        ) -> str:
++            for attempt in range(max_retries + 1):
++                try:
++                    async with lock:
++                        resp = await job
++                    return str(resp)
++                except ValueError as e:
++                    # This is where Gemini + LlamaIndex throw when there are no candidates
++                    if "Response has no candidates" not in str(e):
++                        # some other error, re-raise
++                        raise
++
++                    # print(
++                    #     f"[SummaryModule] Gemini returned no candidates for cluster "
++                    #     f"{cluster_idx} (attempt {attempt+1}/{max_retries+1})."
++                    # )
++
++                    # if this was the last attempt, fall back to an empty / default summary
++                    if attempt == max_retries:
++                        return None
++
++                    # otherwise: re-create a new job and retry
++                    # NOTE: we need to re-create the job; the old one has been awaited
++                    docs = documents_per_cluster[cluster_idx]
++                    with_scores = [NodeWithScore(node=doc, score=1.0) for doc in docs]
++                    job = self.response_synthesizer.asynthesize(
++                        self.summary_prompt + "\n" + DEFAULT_SAFETY_PROMPT, with_scores
++                    )
++
++        # run jobs sequentially with retries (num_workers still protects underlying LLM client)
++        for idx, job in enumerate(jobs):
++            summary_str = await run_job_with_retry(job, idx)
++            if summary_str is not None:
++                responses.append(summary_str)
++        # responses = []
++
++        # # run the jobs while limiting the number of concurrent jobs to num_workers
++        # for job in jobs:
++        #     async with lock:
++        #         responses.append(await job)
++        # print(
++        #     f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@LLM CALLED, generated {len(responses)} summaries. total docs: {total_docs}, total clusters: {total_clusters}"
++        # )
+         # print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@ responses:", responses)
+         return [str(response) for response in responses]
+ 
+ 
+-
+ def create_summary_module(llm: Optional[LLM] = None) -> SummaryModule:
+     if llm is None:
+         llm = create_default_llm()
+     return SummaryModule(llm=llm)
+ 
+ 
+-
+ def create_qdrant_client(
+     qdrant_persist_dir: Optional[str] = DEFAULT_QDRANT_PERSIST_DIR,
+     host: str = "localhost",
+@@ -332,7 +381,6 @@ def create_qdrant_client(
+     return client
+ 
+ 
+-
+ def create_vector_store(
+     client: AsyncQdrantClient,
+     collection_name: str = "agent_mem_hvm",
+@@ -341,7 +389,6 @@ def create_vector_store(
+     return vector_store
+ 
+ 
+-
+ def create_vector_store_index(
+     vector_store: QdrantVectorStore,
+     embed_model: Optional[BaseEmbedding] = create_default_embedding_model(),
+@@ -354,11 +401,11 @@ def create_vector_store_index(
+         embed_model=embed_model,
+         transformations=transformations,
+         show_progress=True,
++        callback_manager=embed_model.callback_manager if embed_model else None,
+     )
+     return index
+ 
+ 
+-
+ def create_hvm(
+     client: AsyncQdrantClient,
+     name: str = "hvm_memory",
+@@ -390,7 +437,6 @@ def create_hvm(
+     )
+ 
+ 
+-
+ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
+     """Long-term memory that stores every turn as a leaf node.
+     TreeIndex automatically builds a hierarchy above the leaves.
+@@ -424,9 +470,9 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
+     llm: LLM = Field(description="LLM")
+     embed_model: BaseEmbedding = Field(description="Embedding model")
+ 
+-    message_history: List[ChatMessage] = Field(
+-        default_factory=list, description="History of messages exchanged with the user."
+-    )
++    # message_history: List[ChatMessage] = Field(
++    #     default_factory=list, description="History of messages exchanged with the user."
++    # )
+ 
+     tree_depth: int = Field(default=3, description="The depth of the tree.")
+     summary_module: SummaryModule = Field(
+@@ -439,36 +485,24 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
+     verbose: bool = Field(default=False, description="Verbose mode.")
+ 
+     def update_stats(self):
+-        llm_handler = None
+-        embed_handler = None
+-        try:
+-            llm_handlers = self.llm.callback_manager.handlers or []
+-            llm_handler = next((h for h in llm_handlers if isinstance(h, TokenCountingHandler)), None)
+-        except Exception:
+-            llm_handler = None
+-        try:
+-            embed_handlers = self.embed_model.callback_manager.handlers or []
+-            embed_handler = next((h for h in embed_handlers if isinstance(h, TokenCountingHandler)), None)
+-        except Exception:
+-            embed_handler = None
+-
+-        # ⚠️ If you want update_stats to be "read-only", DO NOT overwrite self.input_tokens/… here.
+-        # If you do want absolute totals for debugging, store them under different attributes.
+-        # Example (debug-only):
+-        if llm_handler:
+-            self._abs_llm_prompt_tokens = llm_handler.prompt_llm_token_count
+-            self._abs_llm_completion_tokens = llm_handler.completion_llm_token_count
+-        if embed_handler:
+-            self._abs_embed_tokens = getattr(embed_handler, "total_embedding_token_count", 0)
+-
++        llm_handler = get_token_count_handler(self.llm)
++        embed_handler = get_token_count_handler(self.embed_model)
++        assert (
++            llm_handler is not None
++        ), "TokenCountingHandler not found in LLM's CallbackManager"
++        assert (
++            embed_handler is not None
++        ), "TokenCountingHandler not found in Embedding Model's CallbackManager"
++        self.input_tokens = llm_handler.prompt_llm_token_count
++        self.output_tokens = llm_handler.completion_llm_token_count
++        self.embed_tokens = embed_handler.total_embedding_token_count
+         print(
+-            f"HVM stats (abs): prompt={getattr(self, '_abs_llm_prompt_tokens', 0)}, "
+-            f"completion={getattr(self, '_abs_llm_completion_tokens', 0)}, "
+-            f"embed={getattr(self, '_abs_embed_tokens', 0)}, "
++            f"HVM stats (abs): prompt={self.input_tokens}, "
++            f"completion={self.output_tokens}, "
++            f"embed={self.embed_tokens}, "
+             f"load_time={self.load_chat_history_time:.2f}s, retrieval_time={self.retrieval_time:.2f}s"
+         )
+ 
+-
+     async def _get_embeddings_per_level(self, level: int = 0) -> List[float]:
+         """
+         Retrieve embeddings per level in the abstraction tree.
+@@ -497,31 +531,6 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
+             print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@ No messages to store in HVM.")
+             return
+         print(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@ Storing {len(messages)} in HVM.")
+-        self.message_history.extend(messages)
+-
+-        # --- count DELTAS from the SAME LLM that the summarizer actually uses ---
+-        # Prefer the synthesizer's LLM (it is the one doing the summarization calls)
+-        llm_for_summary = getattr(
+-            getattr(self.summary_module, "response_synthesizer", None),
+-            "llm",
+-            self.llm,
+-        )
+-        try:
+-            llm_handlers = getattr(getattr(llm_for_summary, "callback_manager", None), "handlers", []) or []
+-            llm_handler = next((h for h in llm_handlers if isinstance(h, TokenCountingHandler)), None)
+-        except Exception:
+-            llm_handler = None
+-
+-        try:
+-            embed_handlers = getattr(getattr(self.embed_model, "callback_manager", None), "handlers", []) or []
+-            embed_handler = next((h for h in embed_handlers if isinstance(h, TokenCountingHandler)), None)
+-        except Exception:
+-            embed_handler = None
+-
+-        p0 = llm_handler.prompt_llm_token_count if llm_handler else 0
+-        c0 = llm_handler.completion_llm_token_count if llm_handler else 0
+-        e0 = getattr(embed_handler, "total_embedding_token_count", 0) if embed_handler else 0
+-        # ------------------------------------------------------------------------
+ 
+         def _chat_to_node(msg: ChatMessage) -> TextNode:
+             return TextNode(text=msg.content, metadata={"role": msg.role})
+@@ -540,13 +549,17 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
+                 [node.get_content(metadata_mode="embed") for node in cur_nodes]
+             )
+             assert len(embeddings) == len(cur_nodes)
+-            id_to_embedding = {node.id_: emb for node, emb in zip(cur_nodes, embeddings)}
++            id_to_embedding = {
++                node.id_: emb for node, emb in zip(cur_nodes, embeddings)
++            }
+ 
+             # 2) Cluster nodes (async)
+             nodes_per_cluster = await aget_clusters(cur_nodes, id_to_embedding)
+ 
+             # 3) Summarize each cluster using the synthesizer (this triggers LLM calls)
+-            summaries_per_cluster = await self.summary_module.generate_summaries(nodes_per_cluster)
++            summaries_per_cluster = await self.summary_module.generate_summaries(
++                nodes_per_cluster
++            )
+ 
+             # 4) Create new summary nodes for the next level
+             new_nodes = [
+@@ -580,24 +593,9 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
+         # Insert the top-level summaries as well
+         await self.index.ainsert_nodes(cur_nodes)
+ 
+-        # --- compute AFTER−BEFORE deltas and ACCUMULATE into memory counters ---
+-        if llm_handler:
+-            self.input_tokens  += max(0, llm_handler.prompt_llm_token_count     - p0)
+-            self.output_tokens += max(0, llm_handler.completion_llm_token_count - c0)
+-        if embed_handler:
+-            e1 = getattr(embed_handler, "total_embedding_token_count", 0)
+-            self.embed_tokens += max(0, e1 - e0)
+-        # ------------------------------------------------------------------------
+-
+         self.load_chat_history_time += time.time() - start_time
+ 
+-        # Optional: keep as debug only; avoid overwriting per-question counters
+-        try:
+-            self.update_stats()
+-        except Exception:
+-            pass
+-
+-
++        self.update_stats()
+ 
+     async def collapsed_retrieval(
+         self, query_str: str, similarity_top_k: int
+@@ -672,6 +670,7 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
+     ) -> List[NodeWithScore]:
+         """Retrieve nodes given query and mode."""
+         import time  # local import to avoid module order issues
++
+         t0 = time.time()  # **CHANGED**
+         if len(messages) == 0:
+             return ""
+@@ -694,7 +693,7 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
+         res_str = ""
+         for i, node in enumerate(res):
+             res_str += f"<c_{i}>\n{node.node.text}\n</c_{i}>\n"
+-        self.retrieval_time += (time.time() - t0)  # **CHANGED**
++        self.retrieval_time += time.time() - t0  # **CHANGED**
+         self.update_stats()
+         return res_str
+ 
+@@ -749,7 +748,6 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
+                 pass
+ 
+ 
+-
+ # Set a random seed for reproducibility
+ RANDOM_SEED = 224
+ random.seed(RANDOM_SEED)
+@@ -768,7 +766,6 @@ def global_cluster_embeddings(
+     ).fit_transform(embeddings)
+ 
+ 
+-
+ def local_cluster_embeddings(
+     embeddings: np.ndarray, dim: int, num_neighbors: int = 10, metric: str = "cosine"
+ ) -> np.ndarray:
+@@ -776,6 +773,7 @@ def local_cluster_embeddings(
+         n_neighbors=num_neighbors, n_components=dim, metric=metric
+     ).fit_transform(embeddings)
+ 
++
+ #
+ # def get_optimal_clusters(
+ #     embeddings: np.ndarray, max_clusters: int = 50, random_state: int = RANDOM_SEED
+@@ -790,6 +788,7 @@ def local_cluster_embeddings(
+ #     return n_clusters[np.argmin(bics)]
+ #
+ 
++
+ # adjusted version of get_optimal_clusters to avoid numerical issue during clustering
+ def get_optimal_clusters(
+     embeddings: np.ndarray, max_clusters: int = 50, random_state: int = RANDOM_SEED
+@@ -852,6 +851,7 @@ _NUMBA_LOCK = threading.RLock()
+ # from numba import threading_layer
+ # print("Numba layer:", threading_layer())  # quick sanity check
+ 
++
+ def perform_clustering(
+     embeddings: np.ndarray,
+     dim: int,
+@@ -1052,8 +1052,7 @@ async def _token_lengths_async(
+ async def aget_clusters(
+     nodes: List[BaseNode],
+     embedding_map: Dict[str, List[float]],
+-    *,
+-    max_length_in_cluster: int = 10000,
++    max_length_in_cluster: int = 8000,
+     tokenizer: Optional[TokenizeFn] = None,
+     reduction_dimension: int = 10,
+     threshold: float = 0.1,
+@@ -1079,19 +1078,9 @@ async def aget_clusters(
+         embeddings, dim=reduction_dimension, threshold=threshold
+     )
+ 
+-    # Build label set safely
+-    label_set: set[int] = set()
+-    for arr in clusters:
+-        if arr.size:
+-            label_set.update(arr.tolist())
+-
+-    if not label_set:
+-        # No labels → one big cluster
+-        return [nodes]
+-
+     node_clusters: List[List[BaseNode]] = []
+ 
+-    for label in sorted(label_set):
++    for label in np.unique(np.concatenate(clusters)):
+         indices = [i for i, arr in enumerate(clusters) if label in arr]
+         cluster_nodes = [nodes[i] for i in indices]
+ 
+@@ -1196,7 +1185,7 @@ async def run_smoke_test(dataset, hvm: HierarchicalVectorMemory):
+             total_turn = 0
+             buffer = []
+             for idx, session in enumerate(haystack_sessions):
+-                print(f"Processing haystack session {idx} with {len(session)} turns.")
++                # print(f"Processing haystack session {idx} with {len(session)} turns.")
+                 for turn in session:
+                     content = turn["content"].replace(
+                         "<|endoftext|>", ""
+@@ -1220,7 +1209,7 @@ async def run_smoke_test(dataset, hvm: HierarchicalVectorMemory):
+             response = await hvm.aget(
+                 messages=[ChatMessage(role="user", content=question)],
+                 mode=QueryModes.tree_traversal,
+-                similarity_top_k=1,
++                similarity_top_k=3,
+                 last_n=1,
+             )
+             print(f"Retrieved context from HVM.\n{response}")
+@@ -1237,7 +1226,9 @@ if __name__ == "__main__":
+     # Example usage of data_loader
+     try:
+         # Try to load the default dataset file
+-        dataset = data_loader("/Users/judyyu/memagents/asdrp/eval/data/custom_history/longmemeval_m_sample5_20.json")
++        dataset = data_loader(
++                        "/Users/judyyu/memagents/asdrp/eval/data/custom_history/longmemeval_single_500.json"
++                 )
+         # dataset = data_loader("longmemeval_single_500.json")
+         print(f"Successfully loaded dataset with {len(dataset)} items")
+ 

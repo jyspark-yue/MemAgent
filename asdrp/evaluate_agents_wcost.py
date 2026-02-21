@@ -70,6 +70,9 @@ INPUT_COST_PER_1K = (
 OUTPUT_COST_PER_1K = (
     0.00040  # Cost per 1000 output tokens ($)   [$0.40 * (1000/1000000)]
 )
+EMBEDDING_VECTOR_COST_PER_1K = (
+    0.00000  # Cost per 1000 embedding tokens ($)   [$0.10 * (1000/1000000)]
+)
 
 # Retry configuration for rate-limit handling
 RETRY_ATTEMPTS = 8  # Maximum number of retry attempts on errors
@@ -142,23 +145,6 @@ async def load_chat_history(agent_object, haystack_sessions):
     )  # ReductiveAgent can accept batched user-assistant pairs without its quality being negatively affected
     batch_all = isinstance(agent_object, HVMAgent)
     all_messages = []  # Used only if batch_all is True
-
-    async def _flush_hvm_batch(force: bool = False):
-        """Flush accumulated turns for HVMAgent in manageable chunks."""
-        nonlocal all_messages
-        # Only HVMAgent uses this path
-        if not batch_all:
-            return
-        while (len(all_messages) >= MAX_HVM_BATCH_MESSAGES) or (
-            force and len(all_messages) > 0
-        ):
-            chunk = all_messages[:MAX_HVM_BATCH_MESSAGES]
-            all_messages = all_messages[MAX_HVM_BATCH_MESSAGES:]
-            print(
-                f"Flushing {len(chunk)} batched HVM turns "
-                f"(remaining buffered: {len(all_messages)})..."
-            )
-            await _retry_aput(memory_block, chunk)
     session_count = 0
     turn_count = 0
     for session in haystack_sessions:
@@ -189,7 +175,6 @@ async def load_chat_history(agent_object, haystack_sessions):
             if batch_all:
                 if msg is not None:
                     all_messages.append(msg)
-                    await _flush_hvm_batch()
             else:
                 if can_batch:
                     buffer.append(
@@ -216,74 +201,75 @@ async def load_chat_history(agent_object, haystack_sessions):
         # End of session: flush any leftover buffered pairs for batched memory blocks
         if can_batch and buffer and not batch_all:
             await _retry_aput(memory_block, buffer)
-    if batch_all:
-        await _flush_hvm_batch(force=True)
+    if batch_all and all_messages:
+        print(
+            f"Flushing all {len(all_messages)} messages (total turns: {turn_count}) to memory in one batch..."
+        )
+        await _retry_aput(memory_block, all_messages)
 
-APUT_TIMEOUT_SECS = 120
-MAX_HVM_BATCH_MESSAGES = 250  # limit turns per aput for HVMAgent to avoid long ingests, 
 
-
-async def _retry_aput(memory_block, buffer, summarize=None):
+async def _retry_aput(memory_block, buffer):
     last_exc = None
     for attempt in range(1, RETRY_ATTEMPTS + 1):
         try:
-            # HARD TIMEOUT around the ingest
-            if summarize is None:
-                await asyncio.wait_for(memory_block._aput(buffer), timeout=APUT_TIMEOUT_SECS)
-            else:
-                await asyncio.wait_for(memory_block._aput(buffer, summarize=summarize), timeout=APUT_TIMEOUT_SECS)
+            await memory_block._aput(buffer)
             last_exc = None
             break
-
-        except asyncio.TimeoutError as e:
-            last_exc = e
-            delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
-            delay *= random.uniform(0.8, 1.2)
-            print(f"[aput] Timeout after {APUT_TIMEOUT_SECS}s (attempt {attempt}/{RETRY_ATTEMPTS}). Backing off {delay:.1f}s...")
-            await asyncio.sleep(delay)
-            continue
-
-        except (ClientConnectorError, OSError) as e:
-            last_exc = e
-            delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
-            delay *= random.uniform(0.8, 1.2)
-            print(f"[aput] Connect error {type(e).__name__} (attempt {attempt}/{RETRY_ATTEMPTS}): {e}. Backing off {delay:.1f}s...")
-            await asyncio.sleep(delay)
-            continue
-
-        except ClientError as e:
-            print(f"[aput] ClientError (attempt {attempt}): {e}")
+        except ClientError as e:  # <-- explicitly catch Gemini API errors
+            print(f"ClientError caught (attempt {attempt}): {e}")
             last_exc = e
             if getattr(e, "status", None) in [502, 503, 504]:
                 delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
-                delay *= random.uniform(0.8, 1.2)
-                print(f"[aput] Transient {e.status}, backoff {delay:.1f}s...")
+                delay *= random.uniform(0.8, 1.2)  # add ±20% jitter
+                print(f"Transient server error {e.status}, backing off {delay}s...")
                 await asyncio.sleep(delay)
                 continue
             raise
+
+        except RuntimeError as e:
+            # specifically catch Gemini’s “Response was terminated early: MAX_TOKENS”
+            print(f"Gemini hit content issue (attempt {attempt}): {e}")
+            last_exc = e
+            if "MAX_TOKENS" in str(e) or "PROHIBITED_CONTENT" in str(e):
+                # delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                delay = min(
+                    RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY - 5
+                )
+                delay = delay * random.uniform(0.8, 1.2)  # add ±20% jitter
+                print(f"Backing off {delay}s before retry...")
+                await asyncio.sleep(delay)
+                continue
+            raise  # different RuntimeError
 
         except ValueError as e:
+            print(f"No candidates detected (attempt {attempt}): {e}")
             last_exc = e
             if "no candidates" in str(e):
-                delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY + 10)
-                delay *= random.uniform(0.8, 1.2)
-                print(f"[aput] No candidates, backoff {delay:.1f}s...")
+                delay = min(
+                    RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY + 10
+                )
+                delay = delay * random.uniform(0.8, 1.2)  # add ±20% jitter
+                print(f"Backing off {delay}s before retry...")
                 await asyncio.sleep(delay)
                 continue
-            raise
+            raise  # different RuntimeError
 
         except Exception as e:
+            print(f"Error processing buffered turns (attempt {attempt}): {e}")
+            traceback.print_exc()
             last_exc = e
             if "Rate limit" in str(e) or "429" in str(e):
+                # delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
                 delay = min(RETRY_BASE_DELAY * (2 ** (attempt - 1)), RETRY_MAX_DELAY)
-                delay *= random.uniform(0.8, 1.2)
-                print(f"[aput] RateLimit, backoff {delay:.1f}s...")
+                delay = delay * random.uniform(0.8, 1.2)  # add ±20% jitter
+                print(f"RateLimit detected, backing off {delay}s before retry...")
                 await asyncio.sleep(delay)
                 continue
-            print(f"[aput] Non-retryable error: {e}")
             raise
     if last_exc is not None:
         raise last_exc
+
+
 
 
 def reset_memory(agent_object):
@@ -304,7 +290,9 @@ def reset_memory(agent_object):
             agent_object.memory, []
         )  # Resets agent
 
+
 EVAL_BATCH_SIZE = 25  # Number of questions to process in parallel
+
 
 class LongMemEvalRunner:
     """
@@ -313,6 +301,8 @@ class LongMemEvalRunner:
     """
 
     def __init__(self, agent):
+        self.session_id = "run_" + str(uuid.uuid4())
+        print(f"Starting evaluation session: {self.session_id}")
         self.agent = agent
         if agent is HVMAgent:
             self.q_client = create_qdrant_client()
@@ -351,7 +341,9 @@ class LongMemEvalRunner:
         # Reset agent memory for this question
         if self.agent is HVMAgent:
             agent_object = create_agent(self.agent, q_client=self.q_client)
-            agent_object.reset_session(question.get("question_id", "unknown"))
+            agent_object.reset_session(
+                self.session_id + "_" + question.get("question_id", "unknown")
+            )
         else:
             agent_object = create_agent(self.agent)
         print("Memory reset, processing chat history...")
@@ -373,6 +365,10 @@ class LongMemEvalRunner:
             lch_output_tokens = (
                 agent_object.memory_block.output_tokens
             )  # Number of tokens returned by the LLM response while parsing haystack_sessions
+            try:
+                lch_embed_tokens = agent_object.memory_block.embed_tokens
+            except AttributeError:
+                lch_embed_tokens = 0
             lch_time = (
                 agent_object.memory_block.load_chat_history_time
             )  # Duration of time the LLM took to parse the haystack_sessions
@@ -380,6 +376,7 @@ class LongMemEvalRunner:
             lch_cost = (lch_input_tokens / 1000.0) * INPUT_COST_PER_1K + (
                 lch_output_tokens / 1000.0
             ) * OUTPUT_COST_PER_1K  # Calculates real-world cost
+            +(lch_embed_tokens / 1000.0) * EMBEDDING_VECTOR_COST_PER_1K
 
             # Retry mechanism for rate-limit errors
             last_exc = None
@@ -457,6 +454,7 @@ class LongMemEvalRunner:
         overall_output_tokens = (
             lch_output_tokens + query_output_tokens
         )  # Total amount of tokens "returned" by the agent/memory pair
+        overall_embed_tokens = lch_embed_tokens  # Total amount of embedding tokens used by the memory block
         overall_cost = (
             lch_cost + query_cost
         )  # Total real-world cost of the question/context
@@ -469,6 +467,7 @@ class LongMemEvalRunner:
             "hypothesis": answer_text,
             "memory_input_tokens": lch_input_tokens,
             "memory_output_tokens": lch_output_tokens,
+            "memory_embed_tokens": lch_embed_tokens,
             "memory_cost": lch_cost,
             "memory_time": lch_time,
             "query_input_tokens": query_input_tokens,
@@ -652,6 +651,9 @@ class LongMemEvalRunner:
         total_memory_output_tokens = sum(
             r.get("memory_output_tokens", 0) for r in results
         )
+        total_memory_embed_tokens = sum(
+            r.get("memory_embed_tokens", 0) for r in results
+        )
         total_memory_cost = sum(r.get("memory_cost", 0.00) for r in results)
 
         total_query_input_tokens = sum(r.get("query_input_tokens", 0) for r in results)
@@ -682,6 +684,7 @@ class LongMemEvalRunner:
         summary = {
             "memory_loading_prompt_tokens": total_memory_input_tokens,
             "memory_loading_completion_tokens": total_memory_output_tokens,
+            "memory_loading_embedding_tokens": total_memory_embed_tokens,
             "memory_loading_cost": total_memory_cost,
             "query_prompt_tokens": total_query_input_tokens,
             "query_completion_tokens": total_query_output_tokens,
@@ -780,6 +783,9 @@ def main(data_file, output_file, summary_file):
 
 
 if __name__ == "__main__":
+    # print start time
+    start_time = time.time()
+    print(f"Starting evaluation at {time.strftime('%Y-%m-%d %H:%M:%S')}...")
     # Get the directory where this script lives
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -825,15 +831,30 @@ if __name__ == "__main__":
     #         output_file=output_file,
     #         summary_file=summary_file,
     #     )
-    data_file = os.path.join(
-        BASE_DIR,
-        "eval",
-        "data",
-        "custom_history",
-        "longmemeval_m_sample5_20.json",
-    )
+    # problem_id = "e56a43b9"
+    # data_file = os.path.join(
+    #     BASE_DIR,
+    #     "eval",
+    #     "data",
+    #     "custom_history",
+    #     "longmemeval_m_500_500_splite_10files",
+    #     "longmemeval_m_cleaned_part_01_split",
+    #     f"{problem_id}.json",
+    # )
+    # main(
+    #     data_file,
+    #     output_file=f"response_{problem_id}.json",
+    #     summary_file=f"summary_{problem_id}.json",
+    # )
+
+    file = "longmemeval_m_cleaned_part_10.json"
+    # file = "longmemeval_m_5_20.json"
     main(
-        data_file,
-        output_file="hvm_agent_responses_m_cleaned_part_01.json",
-        summary_file="hvm_agent_summary_m_cleaned_part_01.json",
+        data_file=f"/Users/judyyu/memagents/asdrp/eval/data/custom_history/longmemeval_m_50_500_split/{file}",
+        # data_file=f"/Users/judyyu/memagents/asdrp/eval/data/custom_history/{file}",
+        output_file=f"response_{file.replace('.json', '')}_1.json",
+        summary_file=f"summary_{file.replace('.json', '')}_1.json",
     )
+    print(f"Evaluation completed at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    end_time = time.time()
+    print(f"Total evaluation time: {end_time - start_time:.2f} seconds")

@@ -33,6 +33,7 @@ from asdrp.memory.hvm import (  # keep your existing module path
     create_default_embedding_model,
     data_loader,
     create_qdrant_client,
+    get_token_count_handler,
 )
 from google.genai import types
 from dotenv import load_dotenv, find_dotenv
@@ -87,7 +88,7 @@ class HVMAgent(AgentBase):
     @property
     def can_batch(self):
         return True
-    
+
     @property
     def batch_all(self):
         return True
@@ -96,8 +97,9 @@ class HVMAgent(AgentBase):
         self,
         q_client: AsyncQdrantClient,
         llm: Optional[LLM] = None,
-        embed_model: Optional[BaseEmbedding] = None,  # **CHANGED** (type fix)
-        top_k: int = 2,
+        memory_llm: Optional[LLM] = None,
+        memory_embed_model: Optional[BaseEmbedding] = None,  # **CHANGED** (type fix)
+        top_k: int = 3,
         retrieval_mode: QueryModes = QueryModes.tree_traversal,  # **CHANGED** (typo fix)
         tools: Optional[List[FunctionTool]] = None,
         session_id: Optional[str] = None,
@@ -106,7 +108,8 @@ class HVMAgent(AgentBase):
 
         # Configuration so memory reset can rebuild identical state
         self.llm = llm or create_default_llm()  # uses shared Token handler in hvm.py
-        self.embed_model = embed_model or create_default_embedding_model()
+        self.memory_llm = memory_llm or create_default_llm()
+        self.memory_embed_model = memory_embed_model or create_default_embedding_model()
         self.top_k = top_k
         self.retrieval_mode = retrieval_mode
 
@@ -138,6 +141,7 @@ class HVMAgent(AgentBase):
     def reset_session(self, new_session_id: Optional[str] = None) -> None:
         """Reset the agent's session, optionally with a new session ID."""
         self.collection = new_session_id or f"agent_mem_hvm_{uuid.uuid4().hex}"
+        print(f"Session reset. New collection: {self.collection}")
         # Optionally reset per-question counters here if desired:
         # self.query_input_tokens = 0
         # self.query_output_tokens = 0
@@ -156,8 +160,8 @@ class HVMAgent(AgentBase):
                 collection_name=self.collection,
                 client=self.q_client,
                 tree_depth=3,
-                llm=self.llm,
-                embed_model=self.embed_model,
+                llm=self.memory_llm,
+                embed_model=self.memory_embed_model,
                 transformations=None,
             )
         return self.memory_block_map[self.collection]
@@ -183,19 +187,12 @@ class HVMAgent(AgentBase):
         # ------------------------------
         initial_query_time = time.time()  # **CHANGED**
 
-        # --------------------------------------------------------------------
-        # **CHANGED**: Snapshot TokenCountingHandler totals BEFORE the LLM call
-        # --------------------------------------------------------------------
-        handler = None  # **CHANGED**
-        try:
-            handlers = getattr(self.llm.callback_manager, "handlers", []) or []  # **CHANGED**
-            handler = next(
-                (h for h in handlers if isinstance(h, TokenCountingHandler)), None  # **CHANGED**
-            )
-        except Exception:
-            handler = None  # **CHANGED**
-        p0 = handler.prompt_llm_token_count if handler else 0  # **CHANGED**
-        c0 = handler.completion_llm_token_count if handler else 0  # **CHANGED**
+        token_count_handler = get_token_count_handler(self.llm)
+        assert (
+            token_count_handler is not None
+        ), "TokenCountingHandler not found in LLM's CallbackManager"
+        p0 = token_count_handler.prompt_llm_token_count
+        c0 = token_count_handler.completion_llm_token_count
 
         # Ask the LLM for a completion (native async)
         print(f"Prompt to LLM:\n{prompt}\n")
@@ -209,17 +206,22 @@ class HVMAgent(AgentBase):
         # -------------------------------------------------------------------
         # **CHANGED**: Compute token deltas (prefer handler; fallback tokenizer)
         # -------------------------------------------------------------------
-        if handler:  # **CHANGED**
-            self.query_input_tokens += max(0, handler.prompt_llm_token_count - p0)   # **CHANGED**
-            self.query_output_tokens += max(0, handler.completion_llm_token_count - c0)  # **CHANGED**
-        else:  # **CHANGED**
-            self.query_input_tokens += len(self.tokenizer.encode(prompt))  # **CHANGED**
-            self.query_output_tokens += len(self.tokenizer.encode(assistant_msg))  # **CHANGED**
+        self.query_input_tokens += max(
+            0, token_count_handler.prompt_llm_token_count - p0
+        )  # **CHANGED**
+        self.query_output_tokens += max(
+            0, token_count_handler.completion_llm_token_count - c0
+        )  # **CHANGED**
 
         # ------------------------------
         # **CHANGED**: finalize query time
         # ------------------------------
         self.query_time = time.time() - initial_query_time  # **CHANGED**
+        print(
+            f"Agent query time: {self.query_time:.3f}s, "
+            f"input tokens: {self.query_input_tokens}, "
+            f"output tokens: {self.query_output_tokens}"
+        )
 
         # Store the turn to memory (this will count into memory-block ingest tokens)
         await self.memory.aput(
@@ -242,7 +244,7 @@ async def run_smoke_test():
         # dataset = data_loader("longmemeval_single_500.json")
         dataset = data_loader(
             "/Users/judyyu/memagents/asdrp/eval/data/custom_history/longmemeval_m_sample5_20.json"
-        )
+                    )
         print(f"Successfully loaded dataset with {len(dataset)} items")
 
     except FileNotFoundError as e:
@@ -263,8 +265,9 @@ async def run_smoke_test():
     # --------------------------------------------------------------------
     hvm_agent = HVMAgent(
         q_client=q_client,
-        llm=create_default_llm(),                    # **CHANGED** (remove CallbackManager([]))
-        embed_model=create_default_embedding_model(),# **CHANGED**
+        llm=create_default_llm(),  # **CHANGED** (remove CallbackManager([]))
+        memory_llm=create_default_llm(),  # **CHANGED**
+        memory_embed_model=create_default_embedding_model(),  # **CHANGED**
         top_k=1,
         retrieval_mode=QueryModes.tree_traversal,
         tools=[],
@@ -290,9 +293,10 @@ async def run_smoke_test():
             )
 
             total_turn = 0
+            buffer = []
             for idx, session in enumerate(haystack_sessions):
                 print(f"Processing haystack session {idx} with {len(session)} turns.")
-                buffer = []
+
                 for turn in session:
                     content = turn["content"].replace(
                         "<|endoftext|>", ""
@@ -305,10 +309,17 @@ async def run_smoke_test():
                     else:
                         raise ValueError(f"Unknown role: {turn['role']}")
                     buffer.append(msg)
-                await hvm_agent.memory.aput(buffer)
-                total_turn += len(buffer)
+            await hvm_agent.memory.aput(buffer)
+            total_turn += len(buffer)
             print(
                 f"Inserted all haystack sessions into HVM. Total turns inserted for this question: {total_turn}"
+            )
+            print(
+                f"before question agent token/time counters:"
+                f"[Memory Load Stats] prompt={hvm_agent.memory.input_tokens}, "
+                f"completion={hvm_agent.memory.output_tokens}, "
+                f"embed={hvm_agent.memory.embed_tokens}, "
+                f"load_time={hvm_agent.memory.load_chat_history_time:.3f}s"
             )
 
             response = await hvm_agent.achat(question)
@@ -322,6 +333,7 @@ async def run_smoke_test():
                 f"completion={hvm_agent.query_output_tokens}, time={hvm_agent.query_time:.3f}s"
             )
             print(
+                f"after question agent token/time counters:"
                 f"[Memory Load Stats] prompt={hvm_agent.memory.input_tokens}, "
                 f"completion={hvm_agent.memory.output_tokens}, "
                 f"embed={hvm_agent.memory.embed_tokens}, "

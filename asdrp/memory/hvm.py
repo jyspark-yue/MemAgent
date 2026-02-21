@@ -9,8 +9,6 @@
 #############################################################################
 
 
-
-
 # Standard Library Imports
 from __future__ import annotations
 import os
@@ -60,15 +58,12 @@ This will start a Qdrant instance on localhost:6333 with data persisted in the q
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 
-
 # Math / ML / Data Libraries
 import numba
 import numpy as np
 import umap
 from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
 from sklearn.preprocessing import StandardScaler
-
-
 
 
 # LlamaIndex Core Components
@@ -131,6 +126,8 @@ DEFAULT_SUMMARY_PROMPT = (
     "Summarize the provided text, including as many key details as needed."
 )
 
+DEFAULT_SAFETY_PROMPT = "Ensure the generated content adheres to safety guidelines and does not contain harmful or inappropriate material."
+
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -145,30 +142,18 @@ if not os.path.exists(DEFAULT_QDRANT_PERSIST_DIR):
     os.makedirs(DEFAULT_QDRANT_PERSIST_DIR)
 
 
-# ---------------------------------------------------------------------------
-# **CHANGED**: Shared TokenCountingHandler & CallbackManager for LLM+Embeddings
-# ---------------------------------------------------------------------------
-# Using ONE shared handler ensures token counts aggregate correctly across
-# LLM completions and embedding calls; the evaluator expects combined usage.
-TOKEN_HANDLER = TokenCountingHandler()  # **CHANGED**
-CALLBACK_MANAGER = CallbackManager(handlers=[TOKEN_HANDLER])  # **CHANGED**
-
-# 🔴 ADD THIS LINE — makes the handler global so internal components (like ResponseSynthesizer)
-# created by LlamaIndex also get instrumented automatically.
-from llama_index.core import Settings
-Settings.callback_manager = CALLBACK_MANAGER
-
-
-
 def create_default_llm(
     callback_manager: CallbackManager = None,
     model="gemini-2.5-flash-lite",
-    temperature: float = 0.2,
+    temperature: float = 0,
+    max_output_tokens: int = 1024 * 8,
     **kwargs,
 ) -> LLM:
 
     if callback_manager is None:
-        callback_manager = CALLBACK_MANAGER  # **CHANGED**
+        callback_manager = CallbackManager(
+            handlers=[TokenCountingHandler()]
+        )  # **CHANGED**
     _safety_settings = [
         types.SafetySetting(
             category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
@@ -198,6 +183,7 @@ def create_default_llm(
     llm = GoogleGenAI(
         model=model,
         temperature=temperature,
+        max_output_tokens=max_output_tokens,
         max_retries=100,
         callback_manager=callback_manager,  # **CHANGED** (ensure shared CM is passed)
         generation_config=_gen_cfg,
@@ -205,13 +191,14 @@ def create_default_llm(
     )
     print("llm.callback_manager.handlers:", llm.callback_manager.handlers)
     print("llm:", llm)
+    token_handler = get_token_count_handler(llm)
+    print("llm token_handler:", token_handler)
     return llm
-
 
 
 def create_default_embedding_model(
     model_name: str = "text-embedding-004",
-    embed_batch_size: int = 100,
+    embed_batch_size: int = 50,
     callback_manager: CallbackManager = None,
     **kwargs,
 ):
@@ -219,7 +206,9 @@ def create_default_embedding_model(
     Create a default embedding model.
     """
     if callback_manager is None:
-        callback_manager = CALLBACK_MANAGER  # **CHANGED**
+        callback_manager = CallbackManager(
+            handlers=[TokenCountingHandler()]
+        )  # **CHANGED**
     embed_model = GoogleGenAIEmbedding(
         model_name=model_name,
         embed_batch_size=embed_batch_size,
@@ -230,8 +219,30 @@ def create_default_embedding_model(
         "embed_model.callback_manager.handlers:", embed_model.callback_manager.handlers
     )
     print("embed_model:", embed_model)
+    token_handler = get_token_count_handler(embed_model)
+    print("embed_model token_handler:", token_handler)
     return embed_model
 
+
+def get_token_count_handler(
+    llm_or_embedding_model: Union[LLM, GoogleGenAIEmbedding],
+) -> TokenCountingHandler:
+    """
+    Get the TokenCountingHandler from the LLM or embedding model's callback manager.
+    """
+    try:
+        handlers = llm_or_embedding_model.callback_manager.handlers or []
+        token_handlers = []
+        for h in handlers:
+            if isinstance(h, TokenCountingHandler):
+                token_handlers.append(h)
+        print("Number of TokenCountingHandlers found:", len(token_handlers))
+        token_handler = next(
+            (h for h in handlers if isinstance(h, TokenCountingHandler)), None
+        )
+        return token_handler
+    except Exception:
+        return None
 
 
 class QueryModes(str, Enum):
@@ -239,7 +250,6 @@ class QueryModes(str, Enum):
 
     tree_traversal = "tree_traversal"
     collapsed = "collapsed"
-
 
 
 class SummaryModule(BaseModel):
@@ -263,7 +273,10 @@ class SummaryModule(BaseModel):
         num_workers: int = 4,
     ) -> None:
         response_synthesizer = get_response_synthesizer(
-            response_mode="tree_summarize", use_async=True, llm=llm
+            response_mode="tree_summarize",
+            use_async=True,
+            llm=llm,
+            callback_manager=llm.callback_manager if llm else None,
         )
         super().__init__(
             response_synthesizer=response_synthesizer,
@@ -296,23 +309,59 @@ class SummaryModule(BaseModel):
         lock = asyncio.Semaphore(self.num_workers)
         responses = []
 
-        # run the jobs while limiting the number of concurrent jobs to num_workers
-        for job in jobs:
-            async with lock:
-                responses.append(await job)
-        print(
-            f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@LLM CALLED, generated {len(responses)} summaries. total docs: {total_docs}, total clusters: {total_clusters}"
-        )
+        async def run_job_with_retry(
+            job, cluster_idx: int, max_retries: int = 2
+        ) -> str:
+            for attempt in range(max_retries + 1):
+                try:
+                    async with lock:
+                        resp = await job
+                    return str(resp)
+                except ValueError as e:
+                    # This is where Gemini + LlamaIndex throw when there are no candidates
+                    if "Response has no candidates" not in str(e):
+                        # some other error, re-raise
+                        raise
+
+                    # print(
+                    #     f"[SummaryModule] Gemini returned no candidates for cluster "
+                    #     f"{cluster_idx} (attempt {attempt+1}/{max_retries+1})."
+                    # )
+
+                    # if this was the last attempt, fall back to an empty / default summary
+                    if attempt == max_retries:
+                        return None
+
+                    # otherwise: re-create a new job and retry
+                    # NOTE: we need to re-create the job; the old one has been awaited
+                    docs = documents_per_cluster[cluster_idx]
+                    with_scores = [NodeWithScore(node=doc, score=1.0) for doc in docs]
+                    job = self.response_synthesizer.asynthesize(
+                        self.summary_prompt + "\n" + DEFAULT_SAFETY_PROMPT, with_scores
+                    )
+
+        # run jobs sequentially with retries (num_workers still protects underlying LLM client)
+        for idx, job in enumerate(jobs):
+            summary_str = await run_job_with_retry(job, idx)
+            if summary_str is not None:
+                responses.append(summary_str)
+        # responses = []
+
+        # # run the jobs while limiting the number of concurrent jobs to num_workers
+        # for job in jobs:
+        #     async with lock:
+        #         responses.append(await job)
+        # print(
+        #     f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@LLM CALLED, generated {len(responses)} summaries. total docs: {total_docs}, total clusters: {total_clusters}"
+        # )
         # print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@ responses:", responses)
         return [str(response) for response in responses]
-
 
 
 def create_summary_module(llm: Optional[LLM] = None) -> SummaryModule:
     if llm is None:
         llm = create_default_llm()
     return SummaryModule(llm=llm)
-
 
 
 def create_qdrant_client(
@@ -332,14 +381,12 @@ def create_qdrant_client(
     return client
 
 
-
 def create_vector_store(
     client: AsyncQdrantClient,
     collection_name: str = "agent_mem_hvm",
 ) -> QdrantVectorStore:
     vector_store = QdrantVectorStore(aclient=client, collection_name=collection_name)
     return vector_store
-
 
 
 def create_vector_store_index(
@@ -354,9 +401,9 @@ def create_vector_store_index(
         embed_model=embed_model,
         transformations=transformations,
         show_progress=True,
+        callback_manager=embed_model.callback_manager if embed_model else None,
     )
     return index
-
 
 
 def create_hvm(
@@ -388,7 +435,6 @@ def create_hvm(
         llm=llm,
         embed_model=embed_model,
     )
-
 
 
 class HierarchicalVectorMemory(BaseMemoryBlock[str]):
@@ -424,9 +470,9 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
     llm: LLM = Field(description="LLM")
     embed_model: BaseEmbedding = Field(description="Embedding model")
 
-    message_history: List[ChatMessage] = Field(
-        default_factory=list, description="History of messages exchanged with the user."
-    )
+    # message_history: List[ChatMessage] = Field(
+    #     default_factory=list, description="History of messages exchanged with the user."
+    # )
 
     tree_depth: int = Field(default=3, description="The depth of the tree.")
     summary_module: SummaryModule = Field(
@@ -439,35 +485,23 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
     verbose: bool = Field(default=False, description="Verbose mode.")
 
     def update_stats(self):
-        llm_handler = None
-        embed_handler = None
-        try:
-            llm_handlers = self.llm.callback_manager.handlers or []
-            llm_handler = next((h for h in llm_handlers if isinstance(h, TokenCountingHandler)), None)
-        except Exception:
-            llm_handler = None
-        try:
-            embed_handlers = self.embed_model.callback_manager.handlers or []
-            embed_handler = next((h for h in embed_handlers if isinstance(h, TokenCountingHandler)), None)
-        except Exception:
-            embed_handler = None
-
-        # ⚠️ If you want update_stats to be "read-only", DO NOT overwrite self.input_tokens/… here.
-        # If you do want absolute totals for debugging, store them under different attributes.
-        # Example (debug-only):
-        if llm_handler:
-            self._abs_llm_prompt_tokens = llm_handler.prompt_llm_token_count
-            self._abs_llm_completion_tokens = llm_handler.completion_llm_token_count
-        if embed_handler:
-            self._abs_embed_tokens = getattr(embed_handler, "total_embedding_token_count", 0)
-
+        llm_handler = get_token_count_handler(self.llm)
+        embed_handler = get_token_count_handler(self.embed_model)
+        assert (
+            llm_handler is not None
+        ), "TokenCountingHandler not found in LLM's CallbackManager"
+        assert (
+            embed_handler is not None
+        ), "TokenCountingHandler not found in Embedding Model's CallbackManager"
+        self.input_tokens = llm_handler.prompt_llm_token_count
+        self.output_tokens = llm_handler.completion_llm_token_count
+        self.embed_tokens = embed_handler.total_embedding_token_count
         print(
-            f"HVM stats (abs): prompt={getattr(self, '_abs_llm_prompt_tokens', 0)}, "
-            f"completion={getattr(self, '_abs_llm_completion_tokens', 0)}, "
-            f"embed={getattr(self, '_abs_embed_tokens', 0)}, "
+            f"HVM stats (abs): prompt={self.input_tokens}, "
+            f"completion={self.output_tokens}, "
+            f"embed={self.embed_tokens}, "
             f"load_time={self.load_chat_history_time:.2f}s, retrieval_time={self.retrieval_time:.2f}s"
         )
-
 
     async def _get_embeddings_per_level(self, level: int = 0) -> List[float]:
         """
@@ -497,31 +531,6 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
             print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@ No messages to store in HVM.")
             return
         print(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@ Storing {len(messages)} in HVM.")
-        self.message_history.extend(messages)
-
-        # --- count DELTAS from the SAME LLM that the summarizer actually uses ---
-        # Prefer the synthesizer's LLM (it is the one doing the summarization calls)
-        llm_for_summary = getattr(
-            getattr(self.summary_module, "response_synthesizer", None),
-            "llm",
-            self.llm,
-        )
-        try:
-            llm_handlers = getattr(getattr(llm_for_summary, "callback_manager", None), "handlers", []) or []
-            llm_handler = next((h for h in llm_handlers if isinstance(h, TokenCountingHandler)), None)
-        except Exception:
-            llm_handler = None
-
-        try:
-            embed_handlers = getattr(getattr(self.embed_model, "callback_manager", None), "handlers", []) or []
-            embed_handler = next((h for h in embed_handlers if isinstance(h, TokenCountingHandler)), None)
-        except Exception:
-            embed_handler = None
-
-        p0 = llm_handler.prompt_llm_token_count if llm_handler else 0
-        c0 = llm_handler.completion_llm_token_count if llm_handler else 0
-        e0 = getattr(embed_handler, "total_embedding_token_count", 0) if embed_handler else 0
-        # ------------------------------------------------------------------------
 
         def _chat_to_node(msg: ChatMessage) -> TextNode:
             return TextNode(text=msg.content, metadata={"role": msg.role})
@@ -540,13 +549,17 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
                 [node.get_content(metadata_mode="embed") for node in cur_nodes]
             )
             assert len(embeddings) == len(cur_nodes)
-            id_to_embedding = {node.id_: emb for node, emb in zip(cur_nodes, embeddings)}
+            id_to_embedding = {
+                node.id_: emb for node, emb in zip(cur_nodes, embeddings)
+            }
 
             # 2) Cluster nodes (async)
             nodes_per_cluster = await aget_clusters(cur_nodes, id_to_embedding)
 
             # 3) Summarize each cluster using the synthesizer (this triggers LLM calls)
-            summaries_per_cluster = await self.summary_module.generate_summaries(nodes_per_cluster)
+            summaries_per_cluster = await self.summary_module.generate_summaries(
+                nodes_per_cluster
+            )
 
             # 4) Create new summary nodes for the next level
             new_nodes = [
@@ -580,24 +593,9 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
         # Insert the top-level summaries as well
         await self.index.ainsert_nodes(cur_nodes)
 
-        # --- compute AFTER−BEFORE deltas and ACCUMULATE into memory counters ---
-        if llm_handler:
-            self.input_tokens  += max(0, llm_handler.prompt_llm_token_count     - p0)
-            self.output_tokens += max(0, llm_handler.completion_llm_token_count - c0)
-        if embed_handler:
-            e1 = getattr(embed_handler, "total_embedding_token_count", 0)
-            self.embed_tokens += max(0, e1 - e0)
-        # ------------------------------------------------------------------------
-
         self.load_chat_history_time += time.time() - start_time
 
-        # Optional: keep as debug only; avoid overwriting per-question counters
-        try:
-            self.update_stats()
-        except Exception:
-            pass
-
-
+        self.update_stats()
 
     async def collapsed_retrieval(
         self, query_str: str, similarity_top_k: int
@@ -672,6 +670,7 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
     ) -> List[NodeWithScore]:
         """Retrieve nodes given query and mode."""
         import time  # local import to avoid module order issues
+
         t0 = time.time()  # **CHANGED**
         if len(messages) == 0:
             return ""
@@ -694,7 +693,7 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
         res_str = ""
         for i, node in enumerate(res):
             res_str += f"<c_{i}>\n{node.node.text}\n</c_{i}>\n"
-        self.retrieval_time += (time.time() - t0)  # **CHANGED**
+        self.retrieval_time += time.time() - t0  # **CHANGED**
         self.update_stats()
         return res_str
 
@@ -749,7 +748,6 @@ class HierarchicalVectorMemory(BaseMemoryBlock[str]):
                 pass
 
 
-
 # Set a random seed for reproducibility
 RANDOM_SEED = 224
 random.seed(RANDOM_SEED)
@@ -768,13 +766,13 @@ def global_cluster_embeddings(
     ).fit_transform(embeddings)
 
 
-
 def local_cluster_embeddings(
     embeddings: np.ndarray, dim: int, num_neighbors: int = 10, metric: str = "cosine"
 ) -> np.ndarray:
     return umap.UMAP(
         n_neighbors=num_neighbors, n_components=dim, metric=metric
     ).fit_transform(embeddings)
+
 
 #
 # def get_optimal_clusters(
@@ -789,6 +787,7 @@ def local_cluster_embeddings(
 #         bics.append(gm.bic(embeddings))
 #     return n_clusters[np.argmin(bics)]
 #
+
 
 # adjusted version of get_optimal_clusters to avoid numerical issue during clustering
 def get_optimal_clusters(
@@ -851,6 +850,7 @@ def GMM_cluster(embeddings: np.ndarray, threshold: float, random_state: int = 0)
 _NUMBA_LOCK = threading.RLock()
 # from numba import threading_layer
 # print("Numba layer:", threading_layer())  # quick sanity check
+
 
 def perform_clustering(
     embeddings: np.ndarray,
@@ -1052,8 +1052,7 @@ async def _token_lengths_async(
 async def aget_clusters(
     nodes: List[BaseNode],
     embedding_map: Dict[str, List[float]],
-    *,
-    max_length_in_cluster: int = 10000,
+    max_length_in_cluster: int = 8000,
     tokenizer: Optional[TokenizeFn] = None,
     reduction_dimension: int = 10,
     threshold: float = 0.1,
@@ -1079,19 +1078,9 @@ async def aget_clusters(
         embeddings, dim=reduction_dimension, threshold=threshold
     )
 
-    # Build label set safely
-    label_set: set[int] = set()
-    for arr in clusters:
-        if arr.size:
-            label_set.update(arr.tolist())
-
-    if not label_set:
-        # No labels → one big cluster
-        return [nodes]
-
     node_clusters: List[List[BaseNode]] = []
 
-    for label in sorted(label_set):
+    for label in np.unique(np.concatenate(clusters)):
         indices = [i for i, arr in enumerate(clusters) if label in arr]
         cluster_nodes = [nodes[i] for i in indices]
 
@@ -1196,7 +1185,7 @@ async def run_smoke_test(dataset, hvm: HierarchicalVectorMemory):
             total_turn = 0
             buffer = []
             for idx, session in enumerate(haystack_sessions):
-                print(f"Processing haystack session {idx} with {len(session)} turns.")
+                # print(f"Processing haystack session {idx} with {len(session)} turns.")
                 for turn in session:
                     content = turn["content"].replace(
                         "<|endoftext|>", ""
@@ -1220,7 +1209,7 @@ async def run_smoke_test(dataset, hvm: HierarchicalVectorMemory):
             response = await hvm.aget(
                 messages=[ChatMessage(role="user", content=question)],
                 mode=QueryModes.tree_traversal,
-                similarity_top_k=1,
+                similarity_top_k=3,
                 last_n=1,
             )
             print(f"Retrieved context from HVM.\n{response}")
@@ -1237,7 +1226,9 @@ if __name__ == "__main__":
     # Example usage of data_loader
     try:
         # Try to load the default dataset file
-        dataset = data_loader("/Users/judyyu/memagents/asdrp/eval/data/custom_history/longmemeval_m_sample5_20.json")
+        dataset = data_loader(
+                        "/Users/judyyu/memagents/asdrp/eval/data/custom_history/longmemeval_single_500.json"
+                 )
         # dataset = data_loader("longmemeval_single_500.json")
         print(f"Successfully loaded dataset with {len(dataset)} items")
 
