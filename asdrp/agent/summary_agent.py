@@ -26,7 +26,7 @@ from typing import List
 from llama_index.core.agent.workflow import FunctionAgent, AgentOutput
 from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
 from llama_index.core.utils import count_tokens
-from llama_index.core.base.llms.types import ChatMessage
+from llama_index.core.base.llms.types import ChatMessage, MessageRole
 from llama_index.core.tools import FunctionTool
 from llama_index.core.llms import LLM
 from llama_index.core.memory import (Memory, InsertMethod)
@@ -90,11 +90,13 @@ class SummaryAgent:
     async def achat(self, user_msg: str) -> AgentReply:
         try:
 
-            full_msg = user_msg + str(await self.memory_block._aget())
+            user_message = ChatMessage(role=MessageRole.USER, content=user_msg)
+
+            full_msg = user_msg + str(await self.memory_block._aget(messages=[user_message]))
 
             # Count tokens passed into the LLM within this agent
             self.query_input_tokens = count_tokens(full_msg)
-
+            
             initial_query_time = time.time()
 
             response = await self.agent.run(user_msg=user_msg, memory=self.memory)

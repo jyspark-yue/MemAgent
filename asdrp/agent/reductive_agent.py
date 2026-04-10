@@ -23,7 +23,6 @@ from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
 
 from asdrp.agent.BaseAgent import BaseAgent
-from llama_index.llms.openai import OpenAI
 import time
 import asyncio
 from asdrp.agent.base import AgentReply
@@ -39,10 +38,11 @@ class ReductiveAgent(BaseAgent):
         try:
             initial_query_time = time.time()
             user_message = ChatMessage(role=MessageRole.USER, content=user_msg)
-            await self.memory_block._aput(messages=[user_message])
 
             # Prepend known propositions to the user message if available, with explicit instruction
             props = await self.memory_block._aget(messages=[user_message])
+            if not props:
+                return AgentReply(response_str="ERROR: NO PROPOSITIONS STORED")
 
             prompt = (
                 f"User: {user_msg}\n"

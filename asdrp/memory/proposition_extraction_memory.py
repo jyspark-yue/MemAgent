@@ -110,7 +110,7 @@ class PropositionExtractionMemoryBlock(BaseMemBlock):
     """
 
     def __init__(self, 
-    collection: str = "agent_condensed_mem",
+    collection: str = "agent_proposition_mem",
     host: str = "localhost", 
     port: int = 6333,
     **kwargs: Any
@@ -127,7 +127,7 @@ class PropositionExtractionMemoryBlock(BaseMemBlock):
             self._client.create_collection(
                 collection_name=self._collection,
                 vectors_config=VectorParams(
-                    size=1536,        # must match your embedding model's output
+                    size=1536,        # must match embedding model's output
                     distance=Distance.COSINE
                 )
             )
@@ -186,14 +186,13 @@ class PropositionExtractionMemoryBlock(BaseMemBlock):
                 with_payload=True
             ).points
 
- 
         
         if not results: 
             return ""
         
         return "\n".join([
-            json.loads(r.payload["_node_content"])["text"] 
-            for r in results
+            json.loads(point.payload["_node_content"])["text"] 
+            for point in results
         ])
 
 
