@@ -10,10 +10,13 @@
 #   @author     Eric Vincent Fernandes
 #               - Implemented tracking for token/cost metrics
 #               - Modified code to be compatible with Gemini (GenAI)
+#   @author     Varenya Garg
+#               - Modified code to store and retrieve messages using Qdrant vector database
 #
 # Date:
 #   Created:    July 4, 2025  (Theodore Mui)
 #   Modified:   October 5, 2025 (Eric Vincent Fernandes)
+#   Modified:   April 9, 2026 (Varenya Garg)
 #############################################################################
 
 from dotenv import load_dotenv, find_dotenv
@@ -96,7 +99,7 @@ class SummaryAgent:
 
             # Count tokens passed into the LLM within this agent
             self.query_input_tokens = count_tokens(full_msg)
-            
+
             initial_query_time = time.time()
 
             response = await self.agent.run(user_msg=user_msg, memory=self.memory)

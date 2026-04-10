@@ -10,10 +10,13 @@
 #   @author     Eric Vincent Fernandes
 #               - Implemented tracking for token/cost metrics
 #               - Modified code to be compatible with Gemini (GenAI)
+#   @author     Varenya Garg
+#               - Modified code to store and retrieve messages using Qdrant vector database
 #
 # Date:
 #   Created:    July 2, 2025  (Theodore Mui)
 #   Modified:   October 5, 2025 (Eric Vincent Fernandes)
+#   Modified:   April 9, 2026 (Varenya Garg)
 #############################################################################
 
 import time
