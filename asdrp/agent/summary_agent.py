@@ -10,10 +10,13 @@
 #   @author     Eric Vincent Fernandes
 #               - Implemented tracking for token/cost metrics
 #               - Modified code to be compatible with Gemini (GenAI)
+#   @author     Varenya Garg
+#               - Modified code to store and retrieve messages using Qdrant vector database
 #
 # Date:
 #   Created:    July 4, 2025  (Theodore Mui)
 #   Modified:   October 5, 2025 (Eric Vincent Fernandes)
+#   Modified:   April 9, 2026 (Varenya Garg)
 #############################################################################
 
 from dotenv import load_dotenv, find_dotenv
@@ -26,7 +29,7 @@ from typing import List
 from llama_index.core.agent.workflow import FunctionAgent, AgentOutput
 from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
 from llama_index.core.utils import count_tokens
-from llama_index.core.base.llms.types import ChatMessage
+from llama_index.core.base.llms.types import ChatMessage, MessageRole
 from llama_index.core.tools import FunctionTool
 from llama_index.core.llms import LLM
 from llama_index.core.memory import (Memory, InsertMethod)
@@ -90,7 +93,9 @@ class SummaryAgent:
     async def achat(self, user_msg: str) -> AgentReply:
         try:
 
-            full_msg = user_msg + str(await self.memory_block._aget())
+            user_message = ChatMessage(role=MessageRole.USER, content=user_msg)
+
+            full_msg = user_msg + str(await self.memory_block._aget(messages=[user_message]))
 
             # Count tokens passed into the LLM within this agent
             self.query_input_tokens = count_tokens(full_msg)
