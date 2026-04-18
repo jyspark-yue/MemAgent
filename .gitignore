@@ -169,3 +169,10 @@ dmypy.json
 .DS_Store/
 
 AlphaPose
+
+# Qdrant local persistence (generated at runtime)
+qdrant_storage/
+qdrant_data/
+tmp/
+asdrp/eval/
+asdrp/results/
