@@ -1,30 +1,44 @@
 #############################################################################
-# condensed_memory.py
+# File: condensed_memory.py
 #
-# A condensed memory block that maintains context while staying within 
-# reasonable memory limits.
+# Description:
+#   A condensed memory block that maintains context while staying within reasonable memory limits.
 #
-# @author Theodore Mui
-# @email  theodoremui@gmail.com
-# Tue Jul 2 2025
+# Authors:
+#   @author     Theodore Mui (theodoremui@gmail.com)
+#               - Created summary_agent.py
+#   @author     Eric Vincent Fernandes
+#               - Implemented tracking for token/cost metrics
+#               - Modified code to be compatible with Gemini (GenAI)
+#   @author     Varenya Garg
+#               - Modified code to store and retrieve messages using Qdrant vector database
+#
+# Date:
+#   Created:    July 2, 2025  (Theodore Mui)
+#   Modified:   October 5, 2025 (Eric Vincent Fernandes)
+#   Modified:   April 9, 2026 (Varenya Garg)
 #############################################################################
 
-import asyncio
-import pprint
+import time
 from typing import Any, List, Optional
-
-import tiktoken
+import qdrant_client
+from llama_index.llms.openai import OpenAI
+from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.vector_stores.qdrant import QdrantVectorStore
+from qdrant_client.models import Distance, VectorParams, PointIdsList
+from llama_index.core.schema import TextNode
+from llama_index.core import VectorStoreIndex, StorageContext, Settings
 from llama_index.core.llms import ChatMessage, TextBlock
-from llama_index.core.memory import BaseMemoryBlock, Memory
+from llama_index.core.memory import BaseMemoryBlock
+from llama_index.core.utils import count_tokens
 from pydantic import Field
+import json
 
-# the latest supported encoding model by tiktoken is gpt-4o as of 7/2/2025
-ENCODING_MODEL = "gpt-4o"
-DEFAULT_TOKEN_LIMIT = 50000
+DEFAULT_TOKEN_LIMIT = 60000
 
 class CondensedMemoryBlock(BaseMemoryBlock[str]):
     """
-    This class is a smart conversation buffer that maintains context while 
+    This class is a smart conversation buffer that maintains context while
     staying within reasonable memory limits.
 
     It condenses the conversation history into a single string, while 
@@ -32,18 +46,83 @@ class CondensedMemoryBlock(BaseMemoryBlock[str]):
 
     It also includes additional kwargs, like tool calls, when needed.
     """
+
+    def __init__(self, 
+    collection: str = "agent_condensed_mem",
+    host: str = "localhost", 
+    port: int = 6333,
+    **kwargs: Any
+    ) -> None:
+        super().__init__(**kwargs)
+        self._collection = collection
+        # Connect to the Qdrant collection
+        self._client = qdrant_client.QdrantClient(host=host, port=port)
+        self._aclient = qdrant_client.AsyncQdrantClient(host=host, port=port)
+        # Check if there is an existing collection 
+        existing = [c.name for c in self._client.get_collections().collections]
+        # Create a new collection if none exists
+        if self._collection not in existing:
+            self._client.create_collection(
+                collection_name=self._collection,
+                vectors_config=VectorParams(
+                    size=1536,        # must match embedding model's output
+                    distance=Distance.COSINE
+                )
+            )
+
+        self._vector_store = QdrantVectorStore(client = self._client, collection_name=collection, aclient=self._aclient)
+       
+        Settings.llm = OpenAI(model="o4-mini")
+        Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small")
+        
+        self._storage_ctx = StorageContext.from_defaults(vector_store=self._vector_store)
+
+        self._index = VectorStoreIndex(nodes=[], storage_context = self._storage_ctx)
+
+
     current_memory: List[str] = Field(default_factory=list)
     token_limit: int = Field(default=DEFAULT_TOKEN_LIMIT)
-    tokenizer: tiktoken.Encoding = tiktoken.encoding_for_model(ENCODING_MODEL) 
+    input_tokens: int = Field(default=0, description="The number of tokens passed into the LLM when loading the chat history.")
+    output_tokens: int = Field(default=0, description="The number of tokens returned by the LLM when loading the chat history. (Unneeded Here)")
+    load_chat_history_time: float = Field(default=0.0, description="The duration of time it took to load the chat history.")
 
     async def _aget(
         self, messages: Optional[List[ChatMessage]] = None, **block_kwargs: Any
     ) -> str:
         """Return the current memory block contents."""
-        return "\n".join(self.current_memory)
+        if messages is None:
+            return ""
+
+        # Use most recent query as the search query
+        query = messages[-1].content
+        query_vector = await Settings.embed_model.aget_text_embedding(query)
+        top_k = block_kwargs.get("top_k", 3)
+        
+        results = self._client.query_points(
+                collection_name=self._collection,
+                query=query_vector,
+                limit=top_k,
+                with_payload=True
+            ).points
+
+        
+        if not results: 
+            return ""
+        
+        return "\n".join([
+            json.loads(point.payload["_node_content"])["text"] 
+            for point in results
+        ])
 
     async def _aput(self, messages: List[ChatMessage]) -> None:
         """Push messages into the memory block. (Only handles text content)"""
+
+        # Skip if no messages
+        if not messages:
+            return
+
+        start_time = time.time()
+
         # construct a string for each message
         for message in messages:
             text_contents = "\n".join(
@@ -63,98 +142,42 @@ class CondensedMemoryBlock(BaseMemoryBlock[str]):
                         for tool_call in val
                     ]
                     kwargs[key] = val
-                elif key != "session_id" and key != "tool_call_id":
+                elif key not in ("session_id", "tool_call_id"):
                     kwargs[key] = val
             memory_str += f"\n({kwargs})" if kwargs else ""
 
-            self.current_memory.append(memory_str)
+            nodes = TextNode(text=memory_str) 
+            await self._index.ainsert_nodes(nodes)
 
-        # ensure this memory block doesn't get too large
-        message_length = sum(
-            len(self.tokenizer.encode(message))
-            for message in self.current_memory
-        )
-        while message_length > self.token_limit:
-            self.current_memory = self.current_memory[1:]
-            message_length = sum(
-                len(self.tokenizer.encode(message))
-                for message in self.current_memory
+
+            # Count tokens for this new message (input tokens)
+            results, _ = self._aclient.scroll(
+                collection_name=self._collection,
+                limit=1000,
+                with_payload=True
             )
 
-#-------------------------------------
-# Main: smoke tests
-#-------------------------------------
+            all_messages = "".join([
+            json.loads(point.payload["_node_content"])["text"] 
+            for point in results
+        ])
+        # ensure this memory block doesn't get too large
+        message_length = count_tokens(all_messages)
+        while message_length > self.token_limit:
+            oldest_point = results[0].id
 
-async def smoke_test():
-    print("\n--- CondensedMemoryBlock Smoke Tests ---\n")
-    mem = CondensedMemoryBlock(name="smoke", token_limit=100)
-    # Test 1: Add a single message
-    msg1 = ChatMessage(
-        blocks=[TextBlock(text="Hello, world!")],
-        additional_kwargs={}
-    )
-    await mem._aput([msg1])
-    print("Test 1 - Single message:")
-    pprint.pprint(await mem._aget())
+            self._client.delete(
+                collection_name = self._collection,
+                points_selector = PointIdsList(points = [oldest_point])
+            )
 
-    # Test 2: Add multiple messages
-    msg2 = ChatMessage(
-        blocks=[TextBlock(text="How are you?")],
-        additional_kwargs={}
-    )
-    await mem._aput([msg2])
-    print("Test 2 - Multiple messages:")
-    pprint.pprint(await mem._aget())
+            results = results[1:]
 
-    # Test 3: Add message with tool_calls
-    msg3 = ChatMessage(
-        blocks=[TextBlock(text="Tool call message")],
-        additional_kwargs={
-            "tool_calls": [
-                {"function": {"name": "search", "arguments": {"q": "test"}}}
-            ],
-            "irrelevant": "should be included"
-        }
-    )
-    await mem._aput([msg3])
-    print("Test 3 - Message with tool_calls:")
-    pprint.pprint(await mem._aget())
+            all_messages = "".join([
+                json.loads(point.payload["_node_content"])["text"] 
+                for point in results
+            ])
 
-    # Test 4: Add message with empty text and only kwargs
-    msg4 = ChatMessage(
-        blocks=[],
-        additional_kwargs={"foo": "bar"}
-    )
-    await mem._aput([msg4])
-    print("Test 4 - Empty text, only kwargs:")
-    pprint.pprint(await mem._aget())
+            message_length = count_tokens(all_messages)
 
-    # Test 5: Exceed token limit (force trimming)
-    # Use short token limit for demonstration
-    mem2 = CondensedMemoryBlock(name="trim", token_limit=10)
-    for i in range(5):
-        msg = ChatMessage(
-            blocks=[TextBlock(text=f"msg{i}")],
-            additional_kwargs={}
-        )
-        await mem2._aput([msg])
-    print("Test 5 - Exceed token limit (should trim):")
-    pprint.pprint(await mem2._aget())
-
-    # Test 6: Add message with session_id/tool_call_id (should be ignored)
-    msg5 = ChatMessage(
-        blocks=[TextBlock(text="Session/tool_call id test")],
-        additional_kwargs={"session_id": "abc", "tool_call_id": "def", "keep": "yes"}
-    )
-    mem3 = CondensedMemoryBlock(name="sidtest", token_limit=100)
-    await mem3._aput([msg5])
-    print("Test 6 - session_id/tool_call_id ignored:")
-    pprint.pprint(await mem3._aget())
-
-if __name__ == "__main__":
-    asyncio.run(smoke_test())
-
-
-
-
-
+        self.load_chat_history_time = time.time() - start_time
