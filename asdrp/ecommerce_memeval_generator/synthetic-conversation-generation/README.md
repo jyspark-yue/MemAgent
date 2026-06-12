@@ -61,7 +61,6 @@ Here's how to set up the Synthetic Conversation Generation toolkit.
 * pip (Python package manager)
 * API keys for your chosen LLM provider 
   - [OpenAI](https://platform.openai.com/docs/overview)
-  - [Anthropic](https://www.anthropic.com/api)
 
 ### Installation
 
@@ -79,11 +78,7 @@ Here's how to set up the Synthetic Conversation Generation toolkit.
    ```
 4. Set up environment variables for your API keys
    ```sh
-   # If using OpenAI
    export OPENAI_API_KEY='your_openai_api_key'
-
-   # If using Anthropic
-   export ANTHROPIC_API_KEY='your_anthropic_api_key'
    ```
 
 <!-- USAGE EXAMPLES -->
@@ -128,7 +123,7 @@ python src/synthetic_conversation_generation/persona_generator.py \
 - `--assistant-path`: Path to YAML file containing your assistant definition (name and description).
 - `--num-personas`: Number of user personas to generate (default: `5`).
 - `--output-path`: Path to save the generated personas (YAML format).
-- `--model-provider`: LLM provider to use for generating personas (`openai` or `anthropic`, default: `openai`).
+- `--model-provider`: LLM provider to use for generating personas (`openai`, default: `openai`).
 - `--model-id`: Model ID for persona generation (default: `o3`).
 - `--previous-personas-path`: Path to YAML file containing previous personas to avoid duplication (optional).
 
@@ -165,7 +160,7 @@ python src/synthetic_conversation_generation/conversation_generator.py \
 - `--conversation-characters-path`: Path to the YAML file containing user personas (output from persona_generator).
 - `--inference-endpoint-path`: Path to a YAML file specifying how to call your AI assistant via HTTP.
 - `--output-path`: Path to save the generated conversations (JSONL format).
-- `--model-provider`: LLM provider to use for generating user messages (`openai` or `anthropic`, default: `openai`).
+- `--model-provider`: LLM provider to use for generating user messages (`openai`, default: `openai`).
 - `--model-id`: Model ID for generating user messages (default: `gpt-4o`).
 - `--conversation-completion-query-model-id`: Model ID for determining when conversations should end (default: `o3`).
 - `--max-conversation-turns`: Maximum number of turns a conversation can have (default: `3`).

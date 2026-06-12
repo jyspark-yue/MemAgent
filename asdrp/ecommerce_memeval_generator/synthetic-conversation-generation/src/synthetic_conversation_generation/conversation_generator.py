@@ -1,3 +1,6 @@
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
+
 import argparse
 import json
 import logging
@@ -11,8 +14,7 @@ from synthetic_conversation_generation.data_models.conversation import Conversat
 from synthetic_conversation_generation.data_models.conversation_characters import ConversationCharacters
 from synthetic_conversation_generation.data_models.inference_endpoint import InferenceEndpoint
 from synthetic_conversation_generation.llm_queries.conversation_completion_query import ConversationCompletionQuery
-from synthetic_conversation_generation.llm_queries.llm_query import ModelProvider, OpenAIModelProvider, \
-    AnthropicModelProvider
+from synthetic_conversation_generation.llm_queries.llm_query import ModelProvider, OpenAIModelProvider
 from synthetic_conversation_generation.llm_queries.user_message_query import UserMessageQuery
 
 # Configure root logger to WARNING to silence third-party libraries
