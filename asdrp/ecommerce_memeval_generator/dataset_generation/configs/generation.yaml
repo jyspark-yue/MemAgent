@@ -1,0 +1,33 @@
+input_jsonl: ecommerce_memeval_generator/synthetic-conversation-generation/data/conversations/ecommerce_conversations_small_final.jsonl
+output_jsonl: datasets/ecommerce_memeval/ecommerce_memeval_dataset_v2.jsonl
+error_jsonl: ecommerce_memeval_generator/dataset_generation/src/ecommerce_memeval_v2_errors.jsonl
+
+provider: openai
+model: gpt-4.1
+temperature: 0.15
+
+max_qas_per_conversation: 7
+min_qas_per_conversation: 5
+max_generation_attempts: 4
+
+customer_id_prefix: cust
+source: ecommerce_conversations_final
+seed: 42
+
+# Use this to force a small smoke test first; null means all rows.
+limit: null
+
+# Keep true during initial testing to avoid API calls.
+dry_run: false
+
+question_types:
+  - preference_recall
+  - constraint_recall
+  - purchase_history_recall
+  - cart_or_wishlist_recall
+  - return_support_recall
+  - temporal_update
+  - conflict_resolution
+  - multi_session_synthesis
+  - recommendation_from_memory
+  - abstention
