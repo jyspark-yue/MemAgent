@@ -1,26 +1,42 @@
 [project]
-name = "memagents"
+name = "memagent"
 version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
-requires-python = ">=3.12"
+description = "Memory agent evaluation and routing project"
+requires-python = "==3.12.*"
 dependencies = [
-    "chromadb>=1.0.13",
-    "ipykernel>=6.29.5",
-    "llama-index-core>=0.12.43",
-    "llama-index-embeddings-openai>=0.3.1",
-    "llama-index-llms-openai>=0.4.7",
-    "llama-index-memory-mem0>=0.3.1",
-    "llama-index-vector-stores-chroma>=0.4.2",
-    "llama-index-vector-stores-qdrant>=0.6.1",
-    "openai>=1.93.0",
-    "protobuf>=3.20.0,<3.21.0",
-    "pytest>=8.4.1",
-    "pytest-asyncio>=0.23.0",
-    "python-dotenv>=1.1.0",
-    "qdrant-client>=1.14.3",
+    "backoff==2.2.1",
+    "datasets==5.0.0",
+    "huggingface-hub==1.26.0",
+    "joblib==1.5.2",
+    "matplotlib==3.10.8",
+    "networkx==3.5",
+    "numpy==2.3.2",
+    "openai==2.45.0",
+    "pydantic==2.12.5",
+    "python-dotenv==1.2.2",
+    "pyyaml==6.0.2",
+    "qdrant-client==1.18.0",
+    "scikit-learn==1.8.0",
+    "scipy==1.17.1",
+    "synthetic-conversation-generation==0.1.0",
+    "tiktoken==0.11.0",
+    "tqdm==4.67.1",
 ]
+
+[dependency-groups]
+dev = [
+    "hypothesis==6.163.0",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+]
+
+[tool.uv]
+package = false
 
 [tool.uv.workspace]
 members = [
+    "asdrp/ecommerce_memeval_generator/synthetic-conversation-generation",
 ]
+
+[tool.uv.sources]
+synthetic-conversation-generation = { workspace = true }

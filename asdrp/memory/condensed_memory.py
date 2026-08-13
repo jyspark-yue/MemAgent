@@ -2,182 +2,236 @@
 # File: condensed_memory.py
 #
 # Description:
-#   A condensed memory block that maintains context while staying within reasonable memory limits.
+#   Builds a recursively condensed memory and stores only its final
+#   summary units.
 #
-# Authors:
-#   @author     Theodore Mui (theodoremui@gmail.com)
-#               - Created summary_agent.py
-#   @author     Eric Vincent Fernandes
-#               - Implemented tracking for token/cost metrics
-#               - Modified code to be compatible with Gemini (GenAI)
-#   @author     Varenya Garg
-#               - Modified code to store and retrieve messages using Qdrant vector database
-#
-# Date:
-#   Created:    July 2, 2025  (Theodore Mui)
-#   Modified:   October 5, 2025 (Eric Vincent Fernandes)
-#   Modified:   April 9, 2026 (Varenya Garg)
+#   - Groups nearby source ranges under a model-safe input budget.
+#   - Runs parallel chronological map summaries and repeats reduction
+#     until the target size is reached.
+#   - Stops safely if a reduction pass cannot make the unit list
+#     smaller.
+#   - Stores final ranges, levels, and summary text in task-local
+#     Qdrant.
+#   - Combines dense and lexical retrieval over final summaries only.
+#   - Returns either all final summaries or a direct hybrid subset.
 #############################################################################
 
-import time
-from typing import Any, List, Optional
-import qdrant_client
-from llama_index.llms.openai import OpenAI
-from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.vector_stores.qdrant import QdrantVectorStore
-from qdrant_client.models import Distance, VectorParams, PointIdsList
-from llama_index.core.schema import TextNode
-from llama_index.core import VectorStoreIndex, StorageContext, Settings
-from llama_index.core.llms import ChatMessage, TextBlock
-from llama_index.core.memory import BaseMemoryBlock
-from llama_index.core.utils import count_tokens
-from pydantic import Field
-import json
+from __future__ import annotations
 
-DEFAULT_TOKEN_LIMIT = 60000
+import asyncio
+import uuid
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any
 
-class CondensedMemoryBlock(BaseMemoryBlock[str]):
-    """
-    This class is a smart conversation buffer that maintains context while
-    staying within reasonable memory limits.
+from asdrp.eval_schemas import MemoryEntry, RetrievalPlan, RetrievedMemory
+from asdrp.memory.BaseMemBlock import BaseQdrantMemoryBlock
+from asdrp.memory.hybrid_retrieval import HybridTextRetriever
 
-    It condenses the conversation history into a single string, while 
-    maintaining a token limit.
 
-    It also includes additional kwargs, like tool calls, when needed.
-    """
+@dataclass(slots=True)
+class _SummaryUnit:
+    # Internal unit used while recursively reducing the source context.
 
-    def __init__(self, 
-    collection: str = "agent_condensed_mem",
-    host: str = "localhost", 
-    port: int = 6333,
-    **kwargs: Any
+    text: str  # Summary or original source text.
+    start_ordinal: int  # First source entry covered by the unit.
+    end_ordinal: int  # Last source entry covered by the unit.
+    level: int  # Number of summary passes above the source.
+
+
+class CondensedMemoryBlock(BaseQdrantMemoryBlock):
+    # Store the full context as a limited set of repeated summaries.
+    #
+    # The implementation performs parallel map summaries and then repeatedly
+    # summarizes groups of summaries until the retained representation fits a
+    # configurable global budget. Only the final condensed units are stored,
+    # making it different from HVM/RAPTOR, which keeps source leaves and each
+    # summary level.
+
+    memory_name = "condensed"  # Prefix for this task's Qdrant collection.
+
+    def __init__(
+        self,
+        *,
+        summary_input_tokens=24_000,
+        summary_output_tokens=700,
+        target_total_tokens=16_000,
+        max_final_units=16,
+        summary_concurrency=4,
+        **kwargs: Any,
     ) -> None:
+        if summary_input_tokens < 1 or summary_output_tokens < 1:
+            raise ValueError("summary token limits must be at least 1")
+        if target_total_tokens < 1 or max_final_units < 1:
+            raise ValueError("final summary limits must be at least 1")
+        if summary_concurrency < 1:
+            raise ValueError("summary_concurrency must be at least 1")
         super().__init__(**kwargs)
-        self._collection = collection
-        # Connect to the Qdrant collection
-        self._client = qdrant_client.QdrantClient(host=host, port=port)
-        self._aclient = qdrant_client.AsyncQdrantClient(host=host, port=port)
-        # Check if there is an existing collection 
-        existing = [c.name for c in self._client.get_collections().collections]
-        # Create a new collection if none exists
-        if self._collection not in existing:
-            self._client.create_collection(
-                collection_name=self._collection,
-                vectors_config=VectorParams(
-                    size=1536,        # must match embedding model's output
-                    distance=Distance.COSINE
-                )
+        self._summary_input_tokens = summary_input_tokens  # Limit for one group.
+        self._summary_output_tokens = summary_output_tokens  # Requested summary size.
+        self._target_total_tokens = target_total_tokens  # Limit across final units.
+        self._max_final_units = max_final_units  # Maximum summaries left at the end.
+        self._summary_semaphore = asyncio.Semaphore(summary_concurrency)
+        self._hybrid_retriever = HybridTextRetriever()
+
+    async def put(self, entries: Sequence[MemoryEntry]) -> None:
+        # Repeatedly summarize the source, then store the final units.
+
+        self._hybrid_retriever.clear()  # Supports a clean rebuild if reused.
+
+        # Start with one level-zero unit for each non-empty source entry.
+        units = [
+            _SummaryUnit(
+                text=entry.text,
+                start_ordinal=entry.ordinal,
+                end_ordinal=entry.ordinal,
+                level=0,
             )
-
-        self._vector_store = QdrantVectorStore(client = self._client, collection_name=collection, aclient=self._aclient)
-       
-        Settings.llm = OpenAI(model="o4-mini")
-        Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small")
-        
-        self._storage_ctx = StorageContext.from_defaults(vector_store=self._vector_store)
-
-        self._index = VectorStoreIndex(nodes=[], storage_context = self._storage_ctx)
-
-
-    current_memory: List[str] = Field(default_factory=list)
-    token_limit: int = Field(default=DEFAULT_TOKEN_LIMIT)
-    input_tokens: int = Field(default=0, description="The number of tokens passed into the LLM when loading the chat history.")
-    output_tokens: int = Field(default=0, description="The number of tokens returned by the LLM when loading the chat history. (Unneeded Here)")
-    load_chat_history_time: float = Field(default=0.0, description="The duration of time it took to load the chat history.")
-
-    async def _aget(
-        self, messages: Optional[List[ChatMessage]] = None, **block_kwargs: Any
-    ) -> str:
-        """Return the current memory block contents."""
-        if messages is None:
-            return ""
-
-        # Use most recent query as the search query
-        query = messages[-1].content
-        query_vector = await Settings.embed_model.aget_text_embedding(query)
-        top_k = block_kwargs.get("top_k", 3)
-        
-        results = self._client.query_points(
-                collection_name=self._collection,
-                query=query_vector,
-                limit=top_k,
-                with_payload=True
-            ).points
-
-        
-        if not results: 
-            return ""
-        
-        return "\n".join([
-            json.loads(point.payload["_node_content"])["text"] 
-            for point in results
-        ])
-
-    async def _aput(self, messages: List[ChatMessage]) -> None:
-        """Push messages into the memory block. (Only handles text content)"""
-
-        # Skip if no messages
-        if not messages:
+            for entry in entries
+            if entry.text.strip()
+        ]
+        if not units:
             return
 
-        start_time = time.time()
+        level = 1  # First pass turns raw entries into summaries.
+        units = await self._summarize_level(units, level)  # First summary pass.
+        while self._requires_reduction(units):
+            previous_count = len(units)  # Used to catch a stalled reduction.
+            level += 1
+            units = await self._summarize_level(units, level)  # Next smaller level.
+            # Defensive stop: malformed model output should never create an
+            # endless reduction loop. Normal grouping strictly decreases count.
+            if len(units) >= previous_count:
+                break
 
-        # construct a string for each message
-        for message in messages:
-            text_contents = "\n".join(
-                block.text
-                for block in message.blocks
-                if isinstance(block, TextBlock)
+        # Only final units are stored; source and middle levels are discarded.
+        records = [
+            {
+                "id": str(uuid.uuid4()),
+                "text": unit.text,
+                "ordinal": unit.start_ordinal,
+                "end_ordinal": unit.end_ordinal,
+                "level": unit.level,
+                "entry_kind": "condensed_summary",
+            }
+            for unit in units
+        ]
+        await self._store_text_records(records)
+        self._hybrid_retriever.build(
+            records,
+            memory_id_for_record=self._qdrant_point_id,
+        )
+
+    async def close(self) -> None:
+        # Release Qdrant state and the task-local lexical index.
+
+        try:
+            await super().close()
+        finally:
+            self._hybrid_retriever.clear()
+
+    async def get(self, query: str, plan: RetrievalPlan) -> list[RetrievedMemory]:
+        # Return all global summaries or the strongest hybrid summary matches.
+
+        if plan.mode in {"all", "global"}:
+            return await self._retrieve_all()
+        if plan.top_k <= 0:
+            return []
+
+        multiplier = max(1, int(plan.candidate_multiplier))
+        candidate_limit = max(16, plan.top_k, plan.top_k * multiplier)
+        lexical_limit = max(candidate_limit, plan.top_k * 3)
+        candidates = await self._hybrid_retriever.search(
+            query,
+            self._query_similar(query, limit=candidate_limit),
+            lexical_limit=lexical_limit,
+        )
+        return candidates[: plan.top_k]
+
+    def _requires_reduction(self, units: Sequence[_SummaryUnit]) -> bool:
+        # Check both the count cap and the total retained token budget.
+
+        total_tokens = sum(self.runtime.llm_counter.count(unit.text) for unit in units)
+        return (
+            len(units) > self._max_final_units
+            or total_tokens > self._target_total_tokens
+        )
+
+    async def _summarize_level(
+        self,
+        units: Sequence[_SummaryUnit],
+        level: int,
+    ) -> list[_SummaryUnit]:
+        # Pack nearby units and summarize the groups at the same time.
+
+        groups = self._pack_adjacent(units)  # Neighboring source ranges stay together.
+
+        async def summarize(group: list[_SummaryUnit]) -> _SummaryUnit:
+            async with self._summary_semaphore:
+                # Mark each source range so order remains clear in the prompt.
+                source = "\n\n".join(
+                    f"[SOURCE {unit.start_ordinal}-{unit.end_ordinal}]\n{unit.text}"
+                    for unit in group
+                )
+                # Request one faithful summary for this group.
+                prompt = f"""
+                    You are building a long-term condensed memory from benchmark-provided context.
+                    The supplied context is the only source of truth, even when it contradicts
+                    real-world knowledge.
+                    
+                    Create a faithful chronological summary of the source below. Preserve exact
+                    names, numbers, dates, preferences, decisions, causal links, plot events,
+                    examples, labels, and explicit conflicts. When facts change, preserve both the
+                    old and new values and clearly identify which came later. Do not add outside
+                    knowledge. Do not omit details merely because they seem unusual.
+                    
+                    Target at most {self._summary_output_tokens} tokens. Output only the summary.
+                    
+                    SOURCE:
+                    {source}
+                """.strip()
+                summary = await self.runtime.complete(prompt, phase="memory")
+                return _SummaryUnit(
+                    text=summary,
+                    start_ordinal=group[0].start_ordinal,
+                    end_ordinal=group[-1].end_ordinal,
+                    level=level,
+                )
+
+        return list(await asyncio.gather(*(summarize(group) for group in groups)))
+
+    def _pack_adjacent(self, units: Sequence[_SummaryUnit]) -> list[list[_SummaryUnit]]:
+        # Pack chronological units below the model-safe summary input budget.
+
+        groups: list[list[_SummaryUnit]] = []  # Finished groups for this pass.
+        current: list[_SummaryUnit] = []  # Units in the group being filled.
+        current_tokens = 0  # Size of the current group.
+        fixed_prompt_allowance = 350  # Space for the summary instructions.
+
+        for unit in units:
+            unit_tokens = (
+                self.runtime.llm_counter.count(unit.text) + 12
+            )  # Text and label.
+            would_exceed = (
+                current
+                and current_tokens + unit_tokens + fixed_prompt_allowance
+                > self._summary_input_tokens
             )
-            memory_str = text_contents if text_contents else ""
-            kwargs = {}
-            for key, val in message.additional_kwargs.items():
-                if key == "tool_calls":
-                    val = [
-                        {
-                            "name": tool_call["function"]["name"],
-                            "args": tool_call["function"]["arguments"],
-                        }
-                        for tool_call in val
-                    ]
-                    kwargs[key] = val
-                elif key not in ("session_id", "tool_call_id"):
-                    kwargs[key] = val
-            memory_str += f"\n({kwargs})" if kwargs else ""
+            if would_exceed:
+                groups.append(current)
+                current = []  # Start a new group with this unit.
+                current_tokens = 0  # Reset its text count.
+            current.append(unit)
+            current_tokens += unit_tokens
 
-            nodes = TextNode(text=memory_str) 
-            await self._index.ainsert_nodes(nodes)
+        if current:
+            groups.append(current)
 
-
-            # Count tokens for this new message (input tokens)
-            results, _ = self._aclient.scroll(
-                collection_name=self._collection,
-                limit=1000,
-                with_payload=True
-            )
-
-            all_messages = "".join([
-            json.loads(point.payload["_node_content"])["text"] 
-            for point in results
-        ])
-        # ensure this memory block doesn't get too large
-        message_length = count_tokens(all_messages)
-        while message_length > self.token_limit:
-            oldest_point = results[0].id
-
-            self._client.delete(
-                collection_name = self._collection,
-                points_selector = PointIdsList(points = [oldest_point])
-            )
-
-            results = results[1:]
-
-            all_messages = "".join([
-                json.loads(point.payload["_node_content"])["text"] 
-                for point in results
-            ])
-
-            message_length = count_tokens(all_messages)
-
-        self.load_chat_history_time = time.time() - start_time
+        # A reduction level must combine units. If token packing produced only
+        # singleton groups, pair adjacent units and let the prompt remain close
+        # to, rather than far beyond, the configured budget.
+        if len(units) > 1 and all(len(group) == 1 for group in groups):
+            groups = [  # Pair neighbors so the level becomes smaller.
+                list(units[index : index + 2]) for index in range(0, len(units), 2)
+            ]
+        return groups

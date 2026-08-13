@@ -2,91 +2,129 @@
 # File: vector_memory.py
 #
 # Description:
-#   Qdrant-backed vector memory block for storing and retrieving conversation
-#   turns with semantic search.
+#   Implements the raw vector memory baseline. It stores each adapter-produced
+#   source entry without summarizing or restructuring its text.
+#
+#   - Preserves source text, ID, order, type, timestamp, and dataset
+#     metadata.
+#   - Stores records through the shared batched embedding and Qdrant
+#     path.
+#   - Combines dense Qdrant search with a lightweight local BM25 index.
+#   - Fuses dense and lexical ranks before architecture-specific reranking.
+#   - Adds a small recency tie-break for current-state questions.
+#   - Expands and deduplicates neighboring source entries when the plan
+#     requests context.
 #############################################################################
 
 from __future__ import annotations
 
-import time
-import uuid
-from datetime import datetime, timezone
-from typing import Any, List, Optional
+from collections.abc import Sequence
+from typing import Any
 
-from llama_index.core import Document, StorageContext, VectorStoreIndex
-from llama_index.core.base.llms.types import ChatMessage
-from llama_index.core.memory import BaseMemoryBlock
-from llama_index.core.utils import count_tokens
-from pydantic import Field
+from asdrp.eval_schemas import MemoryEntry, RetrievalPlan, RetrievedMemory
+from asdrp.memory.BaseMemBlock import BaseQdrantMemoryBlock
+from asdrp.memory.hybrid_retrieval import HybridTextRetriever
 
 
-class VectorMemoryBlock(BaseMemoryBlock[str]):
-    """Vector memory block that stores chat turns and retrieves relevant context."""
+class VectorMemoryBlock(BaseQdrantMemoryBlock):
+    # Store the runner's source entries without changing their text.
+    #
+    # This is intentionally the least transformative architecture. Sessions stay
+    # sessions, documents stay documents, facts stay facts, and chapter-aware
+    # book segments stay chapter-aware segments. Storing summaries here would
+    # erase the clean vector-memory baseline and confound comparisons against the
+    # condensed and RAPTOR architectures.
 
-    name: str = Field(default="vector_memory", description="Memory block name.")
-    vector_store: Any = Field(description="Underlying vector store (QdrantVectorStore).")
-    embed_model: Any = Field(default=None, description="Embedding model for vector indexing.")
-    similarity_top_k: int = Field(default=3, description="Top-k nodes to retrieve.")
-    input_tokens: int = Field(default=0, description="Tokens processed while loading chat history.")
-    output_tokens: int = Field(default=0, description="Completion tokens while loading history (none for vector memory).")
-    load_chat_history_time: float = Field(default=0.0, description="Cumulative time spent loading chat history.")
+    memory_name = "vector"  # Prefix for this task's Qdrant collection.
 
-    def model_post_init(self, __context: Any) -> None:
-        storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
-        self._index = VectorStoreIndex.from_vector_store(
-            vector_store=self.vector_store,
-            embed_model=self.embed_model,
-            storage_context=storage_context,
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._hybrid_retriever = HybridTextRetriever()
+
+    async def put(self, entries: Sequence[MemoryEntry]) -> None:
+        # Embed and store every source entry exactly once.
+
+        self._hybrid_retriever.clear()  # Supports a clean rebuild if reused.
+
+        # Keep the source text, order, type, ID, time, and all extra metadata.
+        records = [
+            {
+                "id": entry.entry_id,
+                "text": entry.text,
+                "ordinal": entry.ordinal,
+                "entry_kind": entry.metadata.get("entry_kind", "context"),
+                "source_id": entry.metadata.get("source_id", entry.entry_id),
+                "timestamp": entry.metadata.get("timestamp"),
+                **entry.metadata,
+            }
+            for entry in entries
+            if entry.text.strip()
+        ]
+        await self._store_text_records(records)
+        self._hybrid_retriever.build(
+            records,
+            memory_id_for_record=self._qdrant_point_id,
         )
 
-    async def _aput(self, messages: List[ChatMessage]) -> None:
-        """Store incoming messages into the vector index."""
-        if not messages:
-            return
+    async def close(self) -> None:
+        # Release Qdrant state and the task-local lexical index.
 
-        start_time = time.time()
-        batch_tokens = 0
+        try:
+            await super().close()
+        finally:
+            self._hybrid_retriever.clear()
 
-        for message in messages:
-            content = (message.content or "").strip()
-            if not content:
-                continue
+    async def get(self, query: str, plan: RetrievalPlan) -> list[RetrievedMemory]:
+        # Use hybrid retrieval, optional recency bias, and adjacent expansion.
 
-            batch_tokens += count_tokens(content)
-            doc = Document(
-                text=content,
-                metadata={
-                    "id": str(uuid.uuid4()),
-                    "role": str(message.role),
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                },
+        if plan.mode in {"all", "global"}:
+            return await self._retrieve_all()
+
+        if plan.top_k <= 0:
+            return []
+
+        multiplier = max(1, int(plan.candidate_multiplier))
+        candidate_limit = max(16, plan.top_k, plan.top_k * multiplier)
+        lexical_limit = max(candidate_limit, plan.top_k * 3)
+        candidates = await self._hybrid_retriever.search(
+            query,
+            self._query_similar(query, limit=candidate_limit),
+            lexical_limit=lexical_limit,
+        )
+        if not candidates:
+            return []
+
+        max_ordinal = max(item.ordinal for item in candidates) or 1  # Recency scale.
+        if plan.prefer_latest:
+            # Conflict-resolution tasks define later statements as authoritative.
+            # A small recency term breaks ties without overwhelming semantics.
+            candidates.sort(
+                key=lambda item: item.score + 0.08 * (item.ordinal / max_ordinal),
+                reverse=True,
             )
-            self._index.insert(doc)
+        else:
+            candidates.sort(key=lambda item: item.score, reverse=True)
 
-        self.input_tokens += batch_tokens
-        self.load_chat_history_time += (time.time() - start_time)
+        seeds = candidates[: plan.top_k]  # Best matches before neighbor expansion.
+        if plan.neighbor_window <= 0:
+            return seeds
 
-    async def _aget(
-        self, messages: Optional[List[ChatMessage]] = None, **block_kwargs: Any
-    ) -> str:
-        """Retrieve relevant memory snippets for the latest query message."""
-        query = self._extract_query(messages)
-        if not query:
-            return ""
-
-        retriever = self._index.as_retriever(similarity_top_k=self.similarity_top_k)
-        nodes = retriever.retrieve(query)
-        if not nodes:
-            return ""
-
-        return "\n".join(node.node.text for node in nodes if getattr(node, "node", None))
-
-    @staticmethod
-    def _extract_query(messages: Optional[List[ChatMessage]]) -> str:
-        if not messages:
-            return ""
-        for message in reversed(messages):
-            content = (message.content or "").strip()
-            if content:
-                return content
-        return ""
+        # Collect the source positions around every strong match.
+        neighbor_ordinals = {
+            seed.ordinal + delta
+            for seed in seeds
+            for delta in range(-plan.neighbor_window, plan.neighbor_window + 1)
+        }
+        neighbors = await self._retrieve_ordinals(neighbor_ordinals)  # Full records.
+        score_by_id = {item.memory_id: item.score for item in seeds}  # Real scores.
+        merged: dict[str, RetrievedMemory] = {}  # Removes overlapping neighbors.
+        for item in neighbors:
+            merged[item.memory_id] = RetrievedMemory(  # One copy of each neighbor.
+                memory_id=item.memory_id,
+                text=item.text,
+                score=score_by_id.get(item.memory_id, 0.0),
+                ordinal=item.ordinal,
+                metadata=item.metadata,
+            )
+        # Chronological ordering makes adjacent book/session evidence readable.
+        return sorted(merged.values(), key=lambda item: (item.ordinal, -item.score))

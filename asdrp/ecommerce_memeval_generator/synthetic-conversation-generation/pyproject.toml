@@ -15,7 +15,9 @@ authors = [
 dependencies = [
     "anthropic",
     "openai",
+    "python-dotenv",
     "pyyaml",
+    "requests",
 ]
 
 [tool.setuptools]

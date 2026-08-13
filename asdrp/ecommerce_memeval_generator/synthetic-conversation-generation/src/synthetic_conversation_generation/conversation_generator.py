@@ -5,7 +5,6 @@ import argparse
 import json
 import logging
 
-from anthropic import Anthropic
 from openai import OpenAI
 
 from synthetic_conversation_generation.data_models.assistant import Assistant
@@ -107,12 +106,8 @@ if __name__ == "__main__":
     parser.add_argument("--max-conversation-turns", type=int, default=3, help="Maximum number of turns a conversation can have")
     args = parser.parse_args()
 
-    if args.model_provider == "openai":
-        openai_client = OpenAI()
-        model_provider = OpenAIModelProvider(openai_client)
-    else:
-        anthropic_client = Anthropic()
-        model_provider = AnthropicModelProvider(anthropic_client)
+    openai_client = OpenAI()
+    model_provider = OpenAIModelProvider(openai_client)
 
     # Load assistant from separate YAML file
     assistant = Assistant.from_yaml(args.assistant_path)
