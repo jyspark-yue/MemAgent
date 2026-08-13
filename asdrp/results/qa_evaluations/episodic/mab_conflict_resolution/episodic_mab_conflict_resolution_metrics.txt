@@ -1,0 +1,56 @@
+========================================================================
+EPISODIC | MAB - CONFLICT RESOLUTION
+========================================================================
+
+Generated:       2026-08-10T00:30:06+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/cr/episodic/mab_cr_episodic.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/episodic/mab_conflict_resolution/mab_cr_episodic.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 55.19%
+End-to-end accuracy              55.19%
+Correct                          101
+Evaluated questions              183
+Input records                    183
+Macro accuracy by question type  55.19%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    101      183    55.19%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                     Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+factconsolidation_mh_262k  3        23     13.04%
+factconsolidation_mh_32k   3        23     13.04%
+factconsolidation_mh_64k   5        22     22.73%
+factconsolidation_mh_6k    6        23     26.09%
+factconsolidation_sh_262k  19       23     82.61%
+factconsolidation_sh_32k   22       22     100.00%
+factconsolidation_sh_64k   21       25     84.00%
+factconsolidation_sh_6k    22       22     100.00%
+
+SOURCE RUN
+----------
+Run Id: 910d6958b54144cab4422d7ac56dbe2d
+Completed Tasks: 8
+Completed Questions: 183
+Previously Completed Questions: 0
+Wall Runtime Seconds: 164.89
+Average Seconds Per Question: 0.9
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 0.082677
+
+========================================================================

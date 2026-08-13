@@ -1,0 +1,50 @@
+========================================================================
+PROPOSITIONAL | MAB - LONG-RANGE UNDERSTANDING
+========================================================================
+
+Generated:       2026-08-10T00:31:44+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/lru/propositional/mab_lru_propositional.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/propositional/mab_long_range_understanding/mab_lru_propositional.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 20.59%
+End-to-end accuracy              20.59%
+Correct                          7
+Evaluated questions              34
+Input records                    34
+Macro accuracy by question type  20.59%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    7        34     20.59%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                   Correct  Count  Accuracy
+-----------------------  -------  -----  --------
+detective_qa             7        14     50.00%
+infbench_sum_eng_shots2  0        20     0.00%
+
+SOURCE RUN
+----------
+Run Id: e33f563f1cb14a49b9d14f2040ad1d19
+Completed Tasks: 27
+Completed Questions: 34
+Previously Completed Questions: 0
+Wall Runtime Seconds: 111.13
+Average Seconds Per Question: 3.27
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 1.188587
+
+========================================================================

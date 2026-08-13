@@ -1,0 +1,62 @@
+========================================================================
+VECTOR | LONGMEMEVAL
+========================================================================
+
+Generated:       2026-08-10T00:34:55+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/longmemeval/vector/lme_vector.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/vector/longmemeval/lme_vector.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 51.00%
+End-to-end accuracy              51.00%
+Correct                          51
+Evaluated questions              100
+Input records                    100
+Macro accuracy by question type  62.21%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+Task-averaged accuracy           62.21%
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Single Session User        12       13     92.31%
+Single Session Preference  5        7      71.43%
+Single Session Assistant   9        11     81.82%
+Multi Session              8        24     33.33%
+Temporal Reasoning         7        25     28.00%
+Knowledge Update           4        14     28.57%
+Abstention                 6        6      100.00%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source       Correct  Count  Accuracy
+-----------  -------  -----  --------
+longmemeval  51       100    51.00%
+
+ABSTENTION
+----------
+Correct  Count  Accuracy
+-------  -----  --------
+6        6      100.00%
+
+SOURCE RUN
+----------
+Run Id: 832e2aafef334a3e965d11c719ff4db3
+Completed Tasks: 2
+Completed Questions: 2
+Previously Completed Questions: 98
+Wall Runtime Seconds: 471.29
+Average Seconds Per Question: 235.65
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 0.087671
+
+========================================================================

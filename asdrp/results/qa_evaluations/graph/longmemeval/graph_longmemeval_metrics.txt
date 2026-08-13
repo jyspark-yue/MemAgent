@@ -1,0 +1,61 @@
+========================================================================
+GRAPH | LONGMEMEVAL
+========================================================================
+
+Generated:       2026-08-10T00:38:46+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/longmemeval/graph/lme_graph.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/graph/longmemeval/lme_graph.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 49.00%
+End-to-end accuracy              49.00%
+Correct                          49
+Evaluated questions              100
+Input records                    100
+Macro accuracy by question type  48.54%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+Task-averaged accuracy           48.54%
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Single Session User        3        13     23.08%
+Single Session Preference  1        7      14.29%
+Single Session Assistant   9        11     81.82%
+Multi Session              15       29     51.72%
+Temporal Reasoning         9        26     34.62%
+Knowledge Update           12       14     85.71%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source       Correct  Count  Accuracy
+-----------  -------  -----  --------
+longmemeval  49       100    49.00%
+
+ABSTENTION
+----------
+Correct  Count  Accuracy
+-------  -----  --------
+6        6      100.00%
+
+SOURCE RUN
+----------
+Run Id: f6bb143144e144668497ba111066a720
+Completed Tasks: 100
+Completed Questions: 100
+Previously Completed Questions: 0
+Wall Runtime Seconds: 8,504.65
+Average Seconds Per Question: 85.05
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 86.577072
+
+========================================================================

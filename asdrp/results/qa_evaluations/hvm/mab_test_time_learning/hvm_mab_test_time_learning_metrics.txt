@@ -1,0 +1,54 @@
+========================================================================
+HVM | MAB - TEST-TIME LEARNING
+========================================================================
+
+Generated:       2026-08-10T00:38:18+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/ttl/hvm/mab_ttl_hvm.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/hvm/mab_test_time_learning/mab_ttl_hvm.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 35.00%
+End-to-end accuracy              35.00%
+Correct                          49
+Evaluated questions              140
+Input records                    140
+Macro accuracy by question type  35.00%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    49       140    35.00%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                            Correct  Count  Accuracy
+--------------------------------  -------  -----  --------
+icl_banking77_5900shot_balance    14       20     70.00%
+icl_clinic150_7050shot_balance    13       20     65.00%
+icl_nlu_8296shot_balance          14       20     70.00%
+icl_trec_coarse_6600shot_balance  2        20     10.00%
+icl_trec_fine_6400shot_balance    0        20     0.00%
+recsys_redial_full                6        40     15.00%
+
+SOURCE RUN
+----------
+Run Id: 185205fd0a854ef88470bff7c7a3cc54
+Completed Tasks: 6
+Completed Questions: 140
+Previously Completed Questions: 0
+Wall Runtime Seconds: 436.64
+Average Seconds Per Question: 3.12
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 2.262598
+
+========================================================================

@@ -1,0 +1,64 @@
+========================================================================
+HVM | ECOMMERCE
+========================================================================
+
+Generated:       2026-08-10T00:37:23+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/ecommerce/hvm/ecommerce_hvm.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/hvm/ecommerce/ecommerce_hvm.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 98.05%
+End-to-end accuracy              98.05%
+Correct                          1,713
+Evaluated questions              1,747
+Input records                    1,747
+Macro accuracy by question type  97.80%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type               Correct  Count  Accuracy
+--------------------------  -------  -----  --------
+Abstention                  365      375    97.33%
+Cart Or Wishlist Recall     498      504    98.81%
+Conflict Resolution         54       55     98.18%
+Constraint Recall           146      148    98.65%
+Multi Session Synthesis     10       10     100.00%
+Preference Recall           161      166    96.99%
+Purchase History Recall     144      150    96.00%
+Recommendation From Memory  39       40     97.50%
+Return Support Recall       52       55     94.55%
+Temporal Update             244      244    100.00%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                         Correct  Count  Accuracy
+-----------------------------  -------  -----  --------
+ecommerce_conversations_final  1,713    1,747  98.05%
+
+ABSTENTION
+----------
+Correct  Count  Accuracy
+-------  -----  --------
+365      375    97.33%
+
+SOURCE RUN
+----------
+Run Id: 6134756f288a4223b93aeb1a81e65746
+Completed Tasks: 351
+Completed Questions: 1,747
+Previously Completed Questions: 0
+Wall Runtime Seconds: 487.81
+Average Seconds Per Question: 0.28
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 1.013824
+
+========================================================================

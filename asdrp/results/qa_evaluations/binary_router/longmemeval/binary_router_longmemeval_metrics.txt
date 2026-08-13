@@ -1,0 +1,57 @@
+========================================================================
+BINARY ROUTER | LONGMEMEVAL
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/longmemeval/binary_router/lme_binary_router_v2.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/binary_router/longmemeval/lme_binary_router_v2.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 78.57%
+End-to-end accuracy              78.57%
+Correct                          11
+Evaluated questions              14
+Input records                    14
+Macro accuracy by question type  78.57%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+Task-averaged accuracy           78.57%
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Single Session Preference  5        7      71.43%
+Knowledge Update           6        7      85.71%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source       Correct  Count  Accuracy
+-----------  -------  -----  --------
+longmemeval  11       14     78.57%
+
+EVALUATION SCOPE
+----------------
+Question Types: single-session-preference, knowledge-update
+Evaluates Every Result Record: yes
+Note: Binary-router evaluation is intentionally limited to the two routed LongMemEval types. The evaluator does not balance or subsample test records; every result row in the selected JSONL is scored.
+
+SOURCE RUN
+----------
+Run Id: a32754a0cb3c42888ac59ae01adc28e0
+Completed Tasks: 14
+Completed Questions: 14
+Previously Completed Questions: 0
+Wall Runtime Seconds: 928.89
+Average Seconds Per Question: 66.35
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 4.32799
+
+========================================================================

@@ -1,0 +1,2460 @@
+============================================================================================
+                             CONSOLIDATED QA EVALUATION REPORT                              
+============================================================================================
+
+Generated:             2026-08-10T00:40:31+00:00
+Judge model:           gpt-5.6-sol
+Requested judge model: gpt-5.6-sol
+Judge source:          openai
+Judge base URL:        -
+Source results:        /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results
+Evaluation output:     /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations
+
+RESULTS OVERVIEW
+----------------
+System         Dataset                         Status  Correct  Evaluated  Accuracy  Macro by Type
+-------------  ------------------------------  ------  -------  ---------  --------  -------------
+Episodic       LongMemEval                     OK      73       100        73.00%    74.41%
+Episodic       Ecommerce                       OK      1,717    1,747      98.28%    98.03%
+Episodic       MAB - Accurate Retrieval        OK      370      400        92.50%    88.12%
+Episodic       MAB - Long-Range Understanding  OK      11       34         32.35%    32.35%
+Episodic       MAB - Test-Time Learning        OK      26       140        18.57%    18.57%
+Episodic       MAB - Conflict Resolution       OK      101      183        55.19%    55.19%
+Propositional  LongMemEval                     OK      48       100        48.00%    55.11%
+Propositional  Ecommerce                       OK      1,645    1,747      94.16%    91.23%
+Propositional  MAB - Accurate Retrieval        OK      217      400        54.25%    52.86%
+Propositional  MAB - Long-Range Understanding  OK      7        34         20.59%    20.59%
+Propositional  MAB - Test-Time Learning        OK      2        140        1.43%     1.43%
+Propositional  MAB - Conflict Resolution       OK      123      183        67.21%    67.21%
+Condensed      LongMemEval                     OK      15       100        15.00%    24.83%
+Condensed      Ecommerce                       OK      1,705    1,747      97.60%    97.54%
+Condensed      MAB - Accurate Retrieval        OK      274      400        68.50%    23.28%
+Condensed      MAB - Long-Range Understanding  OK      10       34         29.41%    29.41%
+Condensed      MAB - Test-Time Learning        OK      40       140        28.57%    28.57%
+Condensed      MAB - Conflict Resolution       OK      15       183        8.20%     8.20%
+Vector         LongMemEval                     OK      51       100        51.00%    62.21%
+Vector         Ecommerce                       OK      1,712    1,747      98.00%    97.69%
+Vector         MAB - Accurate Retrieval        OK      343      400        85.75%    61.76%
+Vector         MAB - Long-Range Understanding  OK      7        34         20.59%    20.59%
+Vector         MAB - Test-Time Learning        OK      93       140        66.43%    66.43%
+Vector         MAB - Conflict Resolution       OK      114      183        62.30%    62.30%
+HVM            LongMemEval                     OK      72       100        72.00%    76.12%
+HVM            Ecommerce                       OK      1,713    1,747      98.05%    97.80%
+HVM            MAB - Accurate Retrieval        OK      369      400        92.25%    89.27%
+HVM            MAB - Long-Range Understanding  OK      13       34         38.24%    38.24%
+HVM            MAB - Test-Time Learning        OK      49       140        35.00%    35.00%
+HVM            MAB - Conflict Resolution       OK      60       183        32.79%    32.79%
+Graph          LongMemEval                     OK      49       100        49.00%    48.54%
+Graph          Ecommerce                       OK      1,563    1,747      89.47%    87.59%
+Graph          MAB - Accurate Retrieval        OK      238      400        59.50%    59.61%
+Graph          MAB - Long-Range Understanding  OK      7        34         20.59%    20.59%
+Graph          MAB - Test-Time Learning        OK      14       140        10.00%    10.00%
+Graph          MAB - Conflict Resolution       OK      146      183        79.78%    79.78%
+Binary Router  LongMemEval                     OK      11       14         78.57%    78.57%
+
+EVALUATION POLICIES
+-------------------
+LongMemEval:
+  LongMemEval-compatible question-type prompts from evaluate_qa.py, using question_type metadata preserved in the task sidecar.
+Ecommerce:
+  Reference-answer LLM judge; abstention and update/conflict question types receive specialized prompts when metadata is available.
+MAB - Accurate Retrieval:
+  Reference-answer LLM judge, reusing LongMemEval-specific prompts when MAB question metadata exposes a LongMemEval question type. This is QA autoevaluation, not a claim of reproducing every official MemoryAgentBench task-specific metric.
+MAB - Long-Range Understanding:
+  Reference-answer LLM judge with a summary-sensitive rubric for long-range understanding tasks. This is QA autoevaluation, not a claim of reproducing every official MemoryAgentBench task-specific metric.
+MAB - Test-Time Learning:
+  Reference-answer LLM judge, reusing LongMemEval-specific prompts when MAB question metadata exposes a LongMemEval question type. This is QA autoevaluation, not a claim of reproducing every official MemoryAgentBench task-specific metric.
+MAB - Conflict Resolution:
+  Reference-answer LLM judge, reusing LongMemEval-specific prompts when MAB question metadata exposes a LongMemEval question type. This is QA autoevaluation, not a claim of reproducing every official MemoryAgentBench task-specific metric.
+
+CONFIGURATION
+-------------
+Shared Across Runs: no
+Comparison Excludes Run Identity Keys: agent, data_file, dataset
+Shared Configuration:
+  Api Concurrency: 32
+  Embedding Backend: openai-api
+  Embedding Batch Size: 256
+  Embedding Batch Token Limit: 240,000
+  Embedding Model: text-embedding-3-small
+  Embedding Parallel Batches: 8
+  Embedding Tokens Per Minute: 4,500,000
+  Ingest Concurrency: 4
+  Keep Collections: no
+  Llm Model: gpt-5.6-luna
+  Max Entry Tokens: 7,000
+  Max Tasks: -
+  Pricing:
+    Llm Input Per Million: 0.2
+    Llm Cached Input Per Million: 0.02
+    Llm Output Per Million: 1.2
+    Embedding Input Per Million: 0.02
+    Llm Cache Write Per Million: 0.25
+    Llm Long Input Per Million: 0.4
+    Llm Long Cached Input Per Million: 0.04
+    Llm Long Cache Write Per Million: 0.5
+    Llm Long Output Per Million: 1.8
+    Llm Long Context Threshold: 272,000
+  Qdrant Batch Size: 256
+  Qdrant Timeout: 120
+  Qdrant Url: http://127.0.0.1:6333
+  Question Concurrency: 1
+  Rate Limit Buffer Seconds: 0.75
+  Request Timeout: 120
+  Retry Attempts: 8
+  Retry Base Delay: 1
+  Retry Max Delay: 20
+  Source Filter: -
+  Start Index: 0
+Varying Configuration:
+  Question Type Filter:
+    -
+      Value: -
+      Runs: episodic/longmemeval, propositional/longmemeval, propositional/ecommerce, propositional/mab_accurate_retrieval, propositional/mab_long_range_understanding, propositional/mab_test_time_learning, propositional/mab_conflict_resolution, condensed/longmemeval, condensed/ecommerce, condensed/mab_accurate_retrieval, condensed/mab_long_range_understanding, condensed/mab_test_time_learning, condensed/mab_conflict_resolution, vector/longmemeval, vector/ecommerce, vector/mab_accurate_retrieval, vector/mab_long_range_understanding, vector/mab_test_time_learning, vector/mab_conflict_resolution, binary_router/longmemeval
+    -
+      Value: <MISSING>
+      Runs: episodic/ecommerce, episodic/mab_accurate_retrieval, episodic/mab_long_range_understanding, episodic/mab_test_time_learning, episodic/mab_conflict_resolution, hvm/longmemeval, hvm/ecommerce, hvm/mab_accurate_retrieval, hvm/mab_long_range_understanding, hvm/mab_test_time_learning, hvm/mab_conflict_resolution, graph/longmemeval, graph/ecommerce, graph/mab_accurate_retrieval, graph/mab_long_range_understanding, graph/mab_test_time_learning, graph/mab_conflict_resolution
+  Router Evaluation Data Sha256:
+    -
+      Value: -
+      Runs: episodic/longmemeval, propositional/longmemeval, propositional/ecommerce, propositional/mab_accurate_retrieval, propositional/mab_long_range_understanding, propositional/mab_test_time_learning, propositional/mab_conflict_resolution, condensed/longmemeval, condensed/ecommerce, condensed/mab_accurate_retrieval, condensed/mab_long_range_understanding, condensed/mab_test_time_learning, condensed/mab_conflict_resolution, vector/longmemeval, vector/ecommerce, vector/mab_accurate_retrieval, vector/mab_long_range_understanding, vector/mab_test_time_learning, vector/mab_conflict_resolution
+    -
+      Value: <MISSING>
+      Runs: episodic/ecommerce, episodic/mab_accurate_retrieval, episodic/mab_long_range_understanding, episodic/mab_test_time_learning, episodic/mab_conflict_resolution, hvm/longmemeval, hvm/ecommerce, hvm/mab_accurate_retrieval, hvm/mab_long_range_understanding, hvm/mab_test_time_learning, hvm/mab_conflict_resolution, graph/longmemeval, graph/ecommerce, graph/mab_accurate_retrieval, graph/mab_long_range_understanding, graph/mab_test_time_learning, graph/mab_conflict_resolution
+    -
+      Value: 83170cc3be8883e92fce602f6e8a740eb5c333590f2b765165db1fad389b65b7
+      Runs: binary_router/longmemeval
+  Router Evaluation Question Ids:
+    -
+      Value: []
+      Runs: episodic/longmemeval, propositional/longmemeval, propositional/ecommerce, propositional/mab_accurate_retrieval, propositional/mab_long_range_understanding, propositional/mab_test_time_learning, propositional/mab_conflict_resolution, condensed/longmemeval, condensed/ecommerce, condensed/mab_accurate_retrieval, condensed/mab_long_range_understanding, condensed/mab_test_time_learning, condensed/mab_conflict_resolution, vector/longmemeval, vector/ecommerce, vector/mab_accurate_retrieval, vector/mab_long_range_understanding, vector/mab_test_time_learning, vector/mab_conflict_resolution
+    -
+      Value: <MISSING>
+      Runs: episodic/ecommerce, episodic/mab_accurate_retrieval, episodic/mab_long_range_understanding, episodic/mab_test_time_learning, episodic/mab_conflict_resolution, hvm/longmemeval, hvm/ecommerce, hvm/mab_accurate_retrieval, hvm/mab_long_range_understanding, hvm/mab_test_time_learning, hvm/mab_conflict_resolution, graph/longmemeval, graph/ecommerce, graph/mab_accurate_retrieval, graph/mab_long_range_understanding, graph/mab_test_time_learning, graph/mab_conflict_resolution
+    -
+      Value: 6aeb4375, 830ce83f, ce6d2d27, 2698e78f, b6019101, 618f13b2, 01493427, 8a2466db, 06878be2, 38146c39, 75f70248, 1da05512, a89d7624, 07b6f563
+      Runs: binary_router/longmemeval
+  Router Model:
+    -
+      Value: -
+      Runs: episodic/longmemeval, propositional/longmemeval, propositional/ecommerce, propositional/mab_accurate_retrieval, propositional/mab_long_range_understanding, propositional/mab_test_time_learning, propositional/mab_conflict_resolution, condensed/longmemeval, condensed/ecommerce, condensed/mab_accurate_retrieval, condensed/mab_long_range_understanding, condensed/mab_test_time_learning, condensed/mab_conflict_resolution, vector/longmemeval, vector/ecommerce, vector/mab_accurate_retrieval, vector/mab_long_range_understanding, vector/mab_test_time_learning, vector/mab_conflict_resolution
+    -
+      Value: <MISSING>
+      Runs: episodic/ecommerce, episodic/mab_accurate_retrieval, episodic/mab_long_range_understanding, episodic/mab_test_time_learning, episodic/mab_conflict_resolution, hvm/longmemeval, hvm/ecommerce, hvm/mab_accurate_retrieval, hvm/mab_long_range_understanding, hvm/mab_test_time_learning, hvm/mab_conflict_resolution, graph/longmemeval, graph/ecommerce, graph/mab_accurate_retrieval, graph/mab_long_range_understanding, graph/mab_test_time_learning, graph/mab_conflict_resolution
+    -
+      Value: asdrp/classification_algorithms/results/hvm_episodic_new_v3/model/tfidf_svc.joblib
+      Runs: binary_router/longmemeval
+  Workers:
+    -
+      Value: 10
+      Runs: episodic/longmemeval, episodic/ecommerce, episodic/mab_accurate_retrieval, episodic/mab_long_range_understanding, episodic/mab_test_time_learning, episodic/mab_conflict_resolution, propositional/longmemeval, propositional/ecommerce, propositional/mab_accurate_retrieval, propositional/mab_long_range_understanding, propositional/mab_test_time_learning, propositional/mab_conflict_resolution, condensed/ecommerce, condensed/mab_accurate_retrieval, condensed/mab_long_range_understanding, condensed/mab_test_time_learning, condensed/mab_conflict_resolution, vector/ecommerce, vector/mab_accurate_retrieval, vector/mab_long_range_understanding, vector/mab_test_time_learning, vector/mab_conflict_resolution, hvm/longmemeval, hvm/ecommerce, hvm/mab_accurate_retrieval, hvm/mab_long_range_understanding, hvm/mab_test_time_learning, hvm/mab_conflict_resolution, graph/longmemeval, graph/ecommerce, graph/mab_accurate_retrieval, graph/mab_long_range_understanding, graph/mab_test_time_learning, graph/mab_conflict_resolution, binary_router/longmemeval
+    -
+      Value: 8
+      Runs: condensed/longmemeval, vector/longmemeval
+Run Dimensions:
+  Dataset Data Files:
+    Longmemeval: asdrp/datasets/longmemeval_v1/splits/longmemeval_20pct/longmemeval_20pct_test.json
+    Ecommerce: asdrp/datasets/ecommerce_memeval/ecommerce_memeval_dataset_multi.json
+    Mab Accurate Retrieval: asdrp/datasets/memory_agent_bench/splits/mab_20pct/Accurate_Retrieval_test.json
+    Mab Long Range Understanding: asdrp/datasets/memory_agent_bench/splits/mab_20pct/Long_Range_Understanding_test.json
+    Mab Test Time Learning: asdrp/datasets/memory_agent_bench/splits/mab_20pct/Test_Time_Learning_decoded_test.json
+    Mab Conflict Resolution: asdrp/datasets/memory_agent_bench/splits/mab_20pct/Conflict_Resolution_test.json
+  Memory Block Agent Values:
+    Episodic: episodic
+    Propositional: proposition
+    Condensed: condensed
+    Vector: vector
+    Hvm: hvm
+    Graph: graph
+    Binary Router: binary_router
+
+
+############################################################################################
+
+========================================================================
+EPISODIC | LONGMEMEVAL
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/longmemeval/episodic/lme_episodic.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/episodic/longmemeval/lme_episodic.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 73.00%
+End-to-end accuracy              73.00%
+Correct                          73
+Evaluated questions              100
+Input records                    100
+Macro accuracy by question type  74.41%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+Task-averaged accuracy           74.41%
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Single Session User        9        13     69.23%
+Single Session Preference  4        7      57.14%
+Single Session Assistant   11       11     100.00%
+Multi Session              20       29     68.97%
+Temporal Reasoning         17       26     65.38%
+Knowledge Update           12       14     85.71%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source       Correct  Count  Accuracy
+-----------  -------  -----  --------
+longmemeval  73       100    73.00%
+
+ABSTENTION
+----------
+Correct  Count  Accuracy
+-------  -----  --------
+5        6      83.33%
+
+SOURCE RUN
+----------
+Run Id: 12cbcb5e7c2c4f059d087d5a51f2ff51
+Completed Tasks: 2
+Completed Questions: 2
+Previously Completed Questions: 98
+Wall Runtime Seconds: 470.17
+Average Seconds Per Question: 235.09
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 0.063414
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+EPISODIC | ECOMMERCE
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/ecommerce/episodic/ecommerce_episodic.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/episodic/ecommerce/ecommerce_episodic.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 98.28%
+End-to-end accuracy              98.28%
+Correct                          1,717
+Evaluated questions              1,747
+Input records                    1,747
+Macro accuracy by question type  98.03%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type               Correct  Count  Accuracy
+--------------------------  -------  -----  --------
+Abstention                  373      375    99.47%
+Cart Or Wishlist Recall     495      504    98.21%
+Conflict Resolution         54       55     98.18%
+Constraint Recall           146      148    98.65%
+Multi Session Synthesis     10       10     100.00%
+Preference Recall           161      166    96.99%
+Purchase History Recall     143      150    95.33%
+Recommendation From Memory  39       40     97.50%
+Return Support Recall       53       55     96.36%
+Temporal Update             243      244    99.59%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                         Correct  Count  Accuracy
+-----------------------------  -------  -----  --------
+ecommerce_conversations_final  1,717    1,747  98.28%
+
+ABSTENTION
+----------
+Correct  Count  Accuracy
+-------  -----  --------
+373      375    99.47%
+
+SOURCE RUN
+----------
+Run Id: 53aaade4fea04ceaa4819960413b65c6
+Completed Tasks: 351
+Completed Questions: 1,747
+Previously Completed Questions: 0
+Wall Runtime Seconds: 360
+Average Seconds Per Question: 0.21
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 0.426278
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+EPISODIC | MAB - ACCURATE RETRIEVAL
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/ar/episodic/mab_ar_episodic.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/episodic/mab_accurate_retrieval/mab_ar_episodic.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 92.50%
+End-to-end accuracy              92.50%
+Correct                          370
+Evaluated questions              400
+Input records                    400
+Macro accuracy by question type  88.12%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Knowledge Update           8        9      88.89%
+Multi Session              13       15     86.67%
+Single Session Assistant   6        6      100.00%
+Single Session Preference  5        6      83.33%
+Single Session User        7        9      77.78%
+Temporal Reasoning         13       15     86.67%
+Unspecified                318      340    93.53%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source          Correct  Count  Accuracy
+--------------  -------  -----  --------
+eventqa_131072  95       100    95.00%
+eventqa_65536   98       100    98.00%
+eventqa_full    86       100    86.00%
+longmemeval_s*  52       60     86.67%
+ruler_qa1_197K  20       20     100.00%
+ruler_qa2_421K  19       20     95.00%
+
+SOURCE RUN
+----------
+Run Id: 1a7922ca345347099616158ab2d4a94c
+Completed Tasks: 22
+Completed Questions: 400
+Previously Completed Questions: 0
+Wall Runtime Seconds: 153.59
+Average Seconds Per Question: 0.38
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 5.747658
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+EPISODIC | MAB - LONG-RANGE UNDERSTANDING
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/lru/episodic/mab_lru_episodic.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/episodic/mab_long_range_understanding/mab_lru_episodic.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 32.35%
+End-to-end accuracy              32.35%
+Correct                          11
+Evaluated questions              34
+Input records                    34
+Macro accuracy by question type  32.35%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    11       34     32.35%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                   Correct  Count  Accuracy
+-----------------------  -------  -----  --------
+detective_qa             11       14     78.57%
+infbench_sum_eng_shots2  0        20     0.00%
+
+SOURCE RUN
+----------
+Run Id: 9d683a42a878431084481089404d1c1a
+Completed Tasks: 27
+Completed Questions: 34
+Previously Completed Questions: 0
+Wall Runtime Seconds: 88.53
+Average Seconds Per Question: 2.6
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 1.352242
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+EPISODIC | MAB - TEST-TIME LEARNING
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/ttl/episodic/mab_ttl_episodic.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/episodic/mab_test_time_learning/mab_ttl_episodic.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 18.57%
+End-to-end accuracy              18.57%
+Correct                          26
+Evaluated questions              140
+Input records                    140
+Macro accuracy by question type  18.57%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    26       140    18.57%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                            Correct  Count  Accuracy
+--------------------------------  -------  -----  --------
+icl_banking77_5900shot_balance    5        20     25.00%
+icl_clinic150_7050shot_balance    6        20     30.00%
+icl_nlu_8296shot_balance          8        20     40.00%
+icl_trec_coarse_6600shot_balance  1        20     5.00%
+icl_trec_fine_6400shot_balance    0        20     0.00%
+recsys_redial_full                6        40     15.00%
+
+SOURCE RUN
+----------
+Run Id: 98240f2758634b1c9dee569d0fd033e4
+Completed Tasks: 6
+Completed Questions: 140
+Previously Completed Questions: 0
+Wall Runtime Seconds: 226.77
+Average Seconds Per Question: 1.62
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 0.196244
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+EPISODIC | MAB - CONFLICT RESOLUTION
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/cr/episodic/mab_cr_episodic.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/episodic/mab_conflict_resolution/mab_cr_episodic.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 55.19%
+End-to-end accuracy              55.19%
+Correct                          101
+Evaluated questions              183
+Input records                    183
+Macro accuracy by question type  55.19%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    101      183    55.19%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                     Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+factconsolidation_mh_262k  3        23     13.04%
+factconsolidation_mh_32k   3        23     13.04%
+factconsolidation_mh_64k   5        22     22.73%
+factconsolidation_mh_6k    6        23     26.09%
+factconsolidation_sh_262k  19       23     82.61%
+factconsolidation_sh_32k   22       22     100.00%
+factconsolidation_sh_64k   21       25     84.00%
+factconsolidation_sh_6k    22       22     100.00%
+
+SOURCE RUN
+----------
+Run Id: 910d6958b54144cab4422d7ac56dbe2d
+Completed Tasks: 8
+Completed Questions: 183
+Previously Completed Questions: 0
+Wall Runtime Seconds: 164.89
+Average Seconds Per Question: 0.9
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 0.082677
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+PROPOSITIONAL | LONGMEMEVAL
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/longmemeval/propositional/lme_propositional.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/propositional/longmemeval/lme_propositional.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 48.00%
+End-to-end accuracy              48.00%
+Correct                          48
+Evaluated questions              100
+Input records                    100
+Macro accuracy by question type  55.11%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+Task-averaged accuracy           55.11%
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Single Session User        8        13     61.54%
+Single Session Preference  5        7      71.43%
+Single Session Assistant   5        11     45.45%
+Multi Session              12       24     50.00%
+Temporal Reasoning         6        25     24.00%
+Knowledge Update           7        14     50.00%
+Abstention                 5        6      83.33%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source       Correct  Count  Accuracy
+-----------  -------  -----  --------
+longmemeval  48       100    48.00%
+
+ABSTENTION
+----------
+Correct  Count  Accuracy
+-------  -----  --------
+5        6      83.33%
+
+SOURCE RUN
+----------
+Run Id: 3c4970162db94ce587ae1cb57dd83884
+Completed Tasks: 100
+Completed Questions: 100
+Previously Completed Questions: 0
+Wall Runtime Seconds: 1,764.53
+Average Seconds Per Question: 17.65
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 32.590881
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+PROPOSITIONAL | ECOMMERCE
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/ecommerce/propositional/ecommerce_propositional.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/propositional/ecommerce/ecommerce_propositional.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 94.16%
+End-to-end accuracy              94.16%
+Correct                          1,645
+Evaluated questions              1,747
+Input records                    1,747
+Macro accuracy by question type  91.23%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type               Correct  Count  Accuracy
+--------------------------  -------  -----  --------
+Abstention                  373      375    99.47%
+Cart Or Wishlist Recall     466      504    92.46%
+Conflict Resolution         52       55     94.55%
+Constraint Recall           132      148    89.19%
+Multi Session Synthesis     8        10     80.00%
+Preference Recall           156      166    93.98%
+Purchase History Recall     133      150    88.67%
+Recommendation From Memory  33       40     82.50%
+Return Support Recall       51       55     92.73%
+Temporal Update             241      244    98.77%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                         Correct  Count  Accuracy
+-----------------------------  -------  -----  --------
+ecommerce_conversations_final  1,645    1,747  94.16%
+
+ABSTENTION
+----------
+Correct  Count  Accuracy
+-------  -----  --------
+373      375    99.47%
+
+SOURCE RUN
+----------
+Run Id: 3232402b30174cf58c8486ebee67d314
+Completed Tasks: 351
+Completed Questions: 1,747
+Previously Completed Questions: 0
+Wall Runtime Seconds: 408.59
+Average Seconds Per Question: 0.23
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 0.478925
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+PROPOSITIONAL | MAB - ACCURATE RETRIEVAL
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/ar/propositional/mab_ar_propositional.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/propositional/mab_accurate_retrieval/mab_ar_propositional.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 54.25%
+End-to-end accuracy              54.25%
+Correct                          217
+Evaluated questions              400
+Input records                    400
+Macro accuracy by question type  52.86%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Knowledge Update           8        9      88.89%
+Multi Session              5        15     33.33%
+Single Session Assistant   3        6      50.00%
+Single Session Preference  4        6      66.67%
+Single Session User        5        9      55.56%
+Temporal Reasoning         3        15     20.00%
+Unspecified                189      340    55.59%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source          Correct  Count  Accuracy
+--------------  -------  -----  --------
+eventqa_131072  60       100    60.00%
+eventqa_65536   60       100    60.00%
+eventqa_full    55       100    55.00%
+longmemeval_s*  28       60     46.67%
+ruler_qa1_197K  11       20     55.00%
+ruler_qa2_421K  3        20     15.00%
+
+SOURCE RUN
+----------
+Run Id: e259b4d7d0614f0e8daa864284da8597
+Completed Tasks: 22
+Completed Questions: 400
+Previously Completed Questions: 0
+Wall Runtime Seconds: 333.63
+Average Seconds Per Question: 0.83
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 2.066535
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+PROPOSITIONAL | MAB - LONG-RANGE UNDERSTANDING
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/lru/propositional/mab_lru_propositional.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/propositional/mab_long_range_understanding/mab_lru_propositional.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 20.59%
+End-to-end accuracy              20.59%
+Correct                          7
+Evaluated questions              34
+Input records                    34
+Macro accuracy by question type  20.59%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    7        34     20.59%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                   Correct  Count  Accuracy
+-----------------------  -------  -----  --------
+detective_qa             7        14     50.00%
+infbench_sum_eng_shots2  0        20     0.00%
+
+SOURCE RUN
+----------
+Run Id: e33f563f1cb14a49b9d14f2040ad1d19
+Completed Tasks: 27
+Completed Questions: 34
+Previously Completed Questions: 0
+Wall Runtime Seconds: 111.13
+Average Seconds Per Question: 3.27
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 1.188587
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+PROPOSITIONAL | MAB - TEST-TIME LEARNING
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/ttl/propositional/mab_ttl_propositional.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/propositional/mab_test_time_learning/mab_ttl_propositional.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  -----
+Overall accuracy                 1.43%
+End-to-end accuracy              1.43%
+Correct                          2
+Evaluated questions              140
+Input records                    140
+Macro accuracy by question type  1.43%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    2        140    1.43%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                            Correct  Count  Accuracy
+--------------------------------  -------  -----  --------
+icl_banking77_5900shot_balance    0        20     0.00%
+icl_clinic150_7050shot_balance    0        20     0.00%
+icl_nlu_8296shot_balance          0        20     0.00%
+icl_trec_coarse_6600shot_balance  0        20     0.00%
+icl_trec_fine_6400shot_balance    0        20     0.00%
+recsys_redial_full                2        40     5.00%
+
+SOURCE RUN
+----------
+Run Id: b71d05c4306e47f3bacf936e65251fd2
+Completed Tasks: 6
+Completed Questions: 140
+Previously Completed Questions: 0
+Wall Runtime Seconds: 1,142.54
+Average Seconds Per Question: 8.16
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 1.217093
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+PROPOSITIONAL | MAB - CONFLICT RESOLUTION
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/cr/propositional/mab_cr_propositional.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/propositional/mab_conflict_resolution/mab_cr_propositional.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 67.21%
+End-to-end accuracy              67.21%
+Correct                          123
+Evaluated questions              183
+Input records                    183
+Macro accuracy by question type  67.21%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    123      183    67.21%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                     Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+factconsolidation_mh_262k  4        23     17.39%
+factconsolidation_mh_32k   7        23     30.43%
+factconsolidation_mh_64k   5        22     22.73%
+factconsolidation_mh_6k    16       23     69.57%
+factconsolidation_sh_262k  22       23     95.65%
+factconsolidation_sh_32k   22       22     100.00%
+factconsolidation_sh_64k   25       25     100.00%
+factconsolidation_sh_6k    22       22     100.00%
+
+SOURCE RUN
+----------
+Run Id: 53b51802d8f24eb69680bfbf5c60eee1
+Completed Tasks: 8
+Completed Questions: 183
+Previously Completed Questions: 0
+Wall Runtime Seconds: 156.95
+Average Seconds Per Question: 0.86
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 0.091293
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+CONDENSED | LONGMEMEVAL
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/longmemeval/condensed/lme_condensed.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/condensed/longmemeval/lme_condensed.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 15.00%
+End-to-end accuracy              15.00%
+Correct                          15
+Evaluated questions              100
+Input records                    100
+Macro accuracy by question type  24.83%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+Task-averaged accuracy           24.83%
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Single Session User        3        13     23.08%
+Single Session Preference  1        7      14.29%
+Single Session Assistant   2        11     18.18%
+Multi Session              0        24     0.00%
+Temporal Reasoning         1        25     4.00%
+Knowledge Update           2        14     14.29%
+Abstention                 6        6      100.00%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source       Correct  Count  Accuracy
+-----------  -------  -----  --------
+longmemeval  15       100    15.00%
+
+ABSTENTION
+----------
+Correct  Count  Accuracy
+-------  -----  --------
+6        6      100.00%
+
+SOURCE RUN
+----------
+Run Id: bfd83eeec8d6416885869c480d6d49a8
+Completed Tasks: 1
+Completed Questions: 1
+Previously Completed Questions: 99
+Wall Runtime Seconds: 587.6
+Average Seconds Per Question: 587.6
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 0.360776
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+CONDENSED | ECOMMERCE
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/ecommerce/condensed/ecommerce_condensed.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/condensed/ecommerce/ecommerce_condensed.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 97.60%
+End-to-end accuracy              97.60%
+Correct                          1,705
+Evaluated questions              1,747
+Input records                    1,747
+Macro accuracy by question type  97.54%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type               Correct  Count  Accuracy
+--------------------------  -------  -----  --------
+Abstention                  363      375    96.80%
+Cart Or Wishlist Recall     494      504    98.02%
+Conflict Resolution         53       55     96.36%
+Constraint Recall           144      148    97.30%
+Multi Session Synthesis     10       10     100.00%
+Preference Recall           160      166    96.39%
+Purchase History Recall     145      150    96.67%
+Recommendation From Memory  39       40     97.50%
+Return Support Recall       53       55     96.36%
+Temporal Update             244      244    100.00%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                         Correct  Count  Accuracy
+-----------------------------  -------  -----  --------
+ecommerce_conversations_final  1,705    1,747  97.60%
+
+ABSTENTION
+----------
+Correct  Count  Accuracy
+-------  -----  --------
+363      375    96.80%
+
+SOURCE RUN
+----------
+Run Id: 415c655559cc4f8c9b5e9e64245dcc51
+Completed Tasks: 351
+Completed Questions: 1,747
+Previously Completed Questions: 0
+Wall Runtime Seconds: 399.13
+Average Seconds Per Question: 0.23
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 0.473335
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+CONDENSED | MAB - ACCURATE RETRIEVAL
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/ar/condensed/mab_ar_condensed.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/condensed/mab_accurate_retrieval/mab_ar_condensed.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 68.50%
+End-to-end accuracy              68.50%
+Correct                          274
+Evaluated questions              400
+Input records                    400
+Macro accuracy by question type  23.28%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Knowledge Update           4        9      44.44%
+Multi Session              0        15     0.00%
+Single Session Assistant   0        6      0.00%
+Single Session Preference  2        6      33.33%
+Single Session User        0        9      0.00%
+Temporal Reasoning         1        15     6.67%
+Unspecified                267      340    78.53%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source          Correct  Count  Accuracy
+--------------  -------  -----  --------
+eventqa_131072  87       100    87.00%
+eventqa_65536   90       100    90.00%
+eventqa_full    76       100    76.00%
+longmemeval_s*  7        60     11.67%
+ruler_qa1_197K  9        20     45.00%
+ruler_qa2_421K  5        20     25.00%
+
+SOURCE RUN
+----------
+Run Id: 067be85575194d49871bd9ab7845506c
+Completed Tasks: 22
+Completed Questions: 400
+Previously Completed Questions: 0
+Wall Runtime Seconds: 264.68
+Average Seconds Per Question: 0.66
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 2.151709
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+CONDENSED | MAB - LONG-RANGE UNDERSTANDING
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/lru/condensed/mab_lru_condensed.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/condensed/mab_long_range_understanding/mab_lru_condensed.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 29.41%
+End-to-end accuracy              29.41%
+Correct                          10
+Evaluated questions              34
+Input records                    34
+Macro accuracy by question type  29.41%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    10       34     29.41%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                   Correct  Count  Accuracy
+-----------------------  -------  -----  --------
+detective_qa             10       14     71.43%
+infbench_sum_eng_shots2  0        20     0.00%
+
+SOURCE RUN
+----------
+Run Id: 456e922ada77474fa1017b350f2193af
+Completed Tasks: 27
+Completed Questions: 34
+Previously Completed Questions: 0
+Wall Runtime Seconds: 164.46
+Average Seconds Per Question: 4.84
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 1.210286
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+CONDENSED | MAB - TEST-TIME LEARNING
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/ttl/condensed/mab_ttl_condensed.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/condensed/mab_test_time_learning/mab_ttl_condensed.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 28.57%
+End-to-end accuracy              28.57%
+Correct                          40
+Evaluated questions              140
+Input records                    140
+Macro accuracy by question type  28.57%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    40       140    28.57%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                            Correct  Count  Accuracy
+--------------------------------  -------  -----  --------
+icl_banking77_5900shot_balance    15       20     75.00%
+icl_clinic150_7050shot_balance    0        20     0.00%
+icl_nlu_8296shot_balance          17       20     85.00%
+icl_trec_coarse_6600shot_balance  2        20     10.00%
+icl_trec_fine_6400shot_balance    1        20     5.00%
+recsys_redial_full                5        40     12.50%
+
+SOURCE RUN
+----------
+Run Id: dfd86d4a1bc045d5ab5e9ee055472905
+Completed Tasks: 6
+Completed Questions: 140
+Previously Completed Questions: 0
+Wall Runtime Seconds: 288.59
+Average Seconds Per Question: 2.06
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 1.0465
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+CONDENSED | MAB - CONFLICT RESOLUTION
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/cr/condensed/mab_cr_condensed.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/condensed/mab_conflict_resolution/mab_cr_condensed.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  -----
+Overall accuracy                 8.20%
+End-to-end accuracy              8.20%
+Correct                          15
+Evaluated questions              183
+Input records                    183
+Macro accuracy by question type  8.20%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    15       183    8.20%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                     Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+factconsolidation_mh_262k  0        23     0.00%
+factconsolidation_mh_32k   0        23     0.00%
+factconsolidation_mh_64k   0        22     0.00%
+factconsolidation_mh_6k    2        23     8.70%
+factconsolidation_sh_262k  1        23     4.35%
+factconsolidation_sh_32k   6        22     27.27%
+factconsolidation_sh_64k   1        25     4.00%
+factconsolidation_sh_6k    5        22     22.73%
+
+SOURCE RUN
+----------
+Run Id: 480374da534b418f92f5b56f273953d8
+Completed Tasks: 8
+Completed Questions: 183
+Previously Completed Questions: 0
+Wall Runtime Seconds: 112.36
+Average Seconds Per Question: 0.61
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 0.353119
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+VECTOR | LONGMEMEVAL
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/longmemeval/vector/lme_vector.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/vector/longmemeval/lme_vector.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 51.00%
+End-to-end accuracy              51.00%
+Correct                          51
+Evaluated questions              100
+Input records                    100
+Macro accuracy by question type  62.21%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+Task-averaged accuracy           62.21%
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Single Session User        12       13     92.31%
+Single Session Preference  5        7      71.43%
+Single Session Assistant   9        11     81.82%
+Multi Session              8        24     33.33%
+Temporal Reasoning         7        25     28.00%
+Knowledge Update           4        14     28.57%
+Abstention                 6        6      100.00%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source       Correct  Count  Accuracy
+-----------  -------  -----  --------
+longmemeval  51       100    51.00%
+
+ABSTENTION
+----------
+Correct  Count  Accuracy
+-------  -----  --------
+6        6      100.00%
+
+SOURCE RUN
+----------
+Run Id: 832e2aafef334a3e965d11c719ff4db3
+Completed Tasks: 2
+Completed Questions: 2
+Previously Completed Questions: 98
+Wall Runtime Seconds: 471.29
+Average Seconds Per Question: 235.65
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 0.087671
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+VECTOR | ECOMMERCE
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/ecommerce/vector/ecommerce_vector.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/vector/ecommerce/ecommerce_vector.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 98.00%
+End-to-end accuracy              98.00%
+Correct                          1,712
+Evaluated questions              1,747
+Input records                    1,747
+Macro accuracy by question type  97.69%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type               Correct  Count  Accuracy
+--------------------------  -------  -----  --------
+Abstention                  369      375    98.40%
+Cart Or Wishlist Recall     496      504    98.41%
+Conflict Resolution         54       55     98.18%
+Constraint Recall           144      148    97.30%
+Multi Session Synthesis     10       10     100.00%
+Preference Recall           161      166    96.99%
+Purchase History Recall     144      150    96.00%
+Recommendation From Memory  39       40     97.50%
+Return Support Recall       52       55     94.55%
+Temporal Update             243      244    99.59%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                         Correct  Count  Accuracy
+-----------------------------  -------  -----  --------
+ecommerce_conversations_final  1,712    1,747  98.00%
+
+ABSTENTION
+----------
+Correct  Count  Accuracy
+-------  -----  --------
+369      375    98.40%
+
+SOURCE RUN
+----------
+Run Id: ea2f69b7a2734a3cbdc0d456057e396e
+Completed Tasks: 351
+Completed Questions: 1,747
+Previously Completed Questions: 0
+Wall Runtime Seconds: 300.47
+Average Seconds Per Question: 0.17
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 0.517247
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+VECTOR | MAB - ACCURATE RETRIEVAL
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/ar/vector/mab_ar_vector.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/vector/mab_accurate_retrieval/mab_ar_vector.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 85.75%
+End-to-end accuracy              85.75%
+Correct                          343
+Evaluated questions              400
+Input records                    400
+Macro accuracy by question type  61.76%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Knowledge Update           1        9      11.11%
+Multi Session              8        15     53.33%
+Single Session Assistant   4        6      66.67%
+Single Session Preference  5        6      83.33%
+Single Session User        6        9      66.67%
+Temporal Reasoning         9        15     60.00%
+Unspecified                310      340    91.18%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source          Correct  Count  Accuracy
+--------------  -------  -----  --------
+eventqa_131072  96       100    96.00%
+eventqa_65536   97       100    97.00%
+eventqa_full    80       100    80.00%
+longmemeval_s*  33       60     55.00%
+ruler_qa1_197K  19       20     95.00%
+ruler_qa2_421K  18       20     90.00%
+
+SOURCE RUN
+----------
+Run Id: 411fe47996ec4f7e98392db54962ab79
+Completed Tasks: 22
+Completed Questions: 400
+Previously Completed Questions: 0
+Wall Runtime Seconds: 182.22
+Average Seconds Per Question: 0.46
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 7.908585
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+VECTOR | MAB - LONG-RANGE UNDERSTANDING
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/lru/vector/mab_lru_vector.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/vector/mab_long_range_understanding/mab_lru_vector.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 20.59%
+End-to-end accuracy              20.59%
+Correct                          7
+Evaluated questions              34
+Input records                    34
+Macro accuracy by question type  20.59%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    7        34     20.59%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                   Correct  Count  Accuracy
+-----------------------  -------  -----  --------
+detective_qa             7        14     50.00%
+infbench_sum_eng_shots2  0        20     0.00%
+
+SOURCE RUN
+----------
+Run Id: 62dc2cf9a6224158b22c0842a14851d9
+Completed Tasks: 27
+Completed Questions: 34
+Previously Completed Questions: 0
+Wall Runtime Seconds: 93.78
+Average Seconds Per Question: 2.76
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 1.371751
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+VECTOR | MAB - TEST-TIME LEARNING
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/ttl/vector/mab_ttl_vector.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/vector/mab_test_time_learning/mab_ttl_vector.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 66.43%
+End-to-end accuracy              66.43%
+Correct                          93
+Evaluated questions              140
+Input records                    140
+Macro accuracy by question type  66.43%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    93       140    66.43%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                            Correct  Count  Accuracy
+--------------------------------  -------  -----  --------
+icl_banking77_5900shot_balance    17       20     85.00%
+icl_clinic150_7050shot_balance    17       20     85.00%
+icl_nlu_8296shot_balance          19       20     95.00%
+icl_trec_coarse_6600shot_balance  17       20     85.00%
+icl_trec_fine_6400shot_balance    16       20     80.00%
+recsys_redial_full                7        40     17.50%
+
+SOURCE RUN
+----------
+Run Id: 32b62b037f7a496498482136b8dd730b
+Completed Tasks: 6
+Completed Questions: 140
+Previously Completed Questions: 0
+Wall Runtime Seconds: 227.14
+Average Seconds Per Question: 1.62
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 0.387763
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+VECTOR | MAB - CONFLICT RESOLUTION
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/cr/vector/mab_cr_vector.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/vector/mab_conflict_resolution/mab_cr_vector.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 62.30%
+End-to-end accuracy              62.30%
+Correct                          114
+Evaluated questions              183
+Input records                    183
+Macro accuracy by question type  62.30%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    114      183    62.30%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                     Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+factconsolidation_mh_262k  3        23     13.04%
+factconsolidation_mh_32k   4        23     17.39%
+factconsolidation_mh_64k   5        22     22.73%
+factconsolidation_mh_6k    11       23     47.83%
+factconsolidation_sh_262k  22       23     95.65%
+factconsolidation_sh_32k   22       22     100.00%
+factconsolidation_sh_64k   25       25     100.00%
+factconsolidation_sh_6k    22       22     100.00%
+
+SOURCE RUN
+----------
+Run Id: e08d0ccaae794a7f82a50bd5b3fdba06
+Completed Tasks: 8
+Completed Questions: 183
+Previously Completed Questions: 0
+Wall Runtime Seconds: 175.69
+Average Seconds Per Question: 0.96
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 0.121615
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+HVM | LONGMEMEVAL
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/longmemeval/hvm/lme_hvm.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/hvm/longmemeval/lme_hvm.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 72.00%
+End-to-end accuracy              72.00%
+Correct                          72
+Evaluated questions              100
+Input records                    100
+Macro accuracy by question type  76.12%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+Task-averaged accuracy           76.12%
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Single Session User        8        13     61.54%
+Single Session Preference  6        7      85.71%
+Single Session Assistant   11       11     100.00%
+Multi Session              19       29     65.52%
+Temporal Reasoning         17       26     65.38%
+Knowledge Update           11       14     78.57%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source       Correct  Count  Accuracy
+-----------  -------  -----  --------
+longmemeval  72       100    72.00%
+
+ABSTENTION
+----------
+Correct  Count  Accuracy
+-------  -----  --------
+4        6      66.67%
+
+SOURCE RUN
+----------
+Run Id: fb6988608ae248a5b2e9e19ba20b77a7
+Completed Tasks: 100
+Completed Questions: 100
+Previously Completed Questions: 0
+Wall Runtime Seconds: 4,254.43
+Average Seconds Per Question: 42.54
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 51.9621
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+HVM | ECOMMERCE
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/ecommerce/hvm/ecommerce_hvm.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/hvm/ecommerce/ecommerce_hvm.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 98.05%
+End-to-end accuracy              98.05%
+Correct                          1,713
+Evaluated questions              1,747
+Input records                    1,747
+Macro accuracy by question type  97.80%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type               Correct  Count  Accuracy
+--------------------------  -------  -----  --------
+Abstention                  365      375    97.33%
+Cart Or Wishlist Recall     498      504    98.81%
+Conflict Resolution         54       55     98.18%
+Constraint Recall           146      148    98.65%
+Multi Session Synthesis     10       10     100.00%
+Preference Recall           161      166    96.99%
+Purchase History Recall     144      150    96.00%
+Recommendation From Memory  39       40     97.50%
+Return Support Recall       52       55     94.55%
+Temporal Update             244      244    100.00%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                         Correct  Count  Accuracy
+-----------------------------  -------  -----  --------
+ecommerce_conversations_final  1,713    1,747  98.05%
+
+ABSTENTION
+----------
+Correct  Count  Accuracy
+-------  -----  --------
+365      375    97.33%
+
+SOURCE RUN
+----------
+Run Id: 6134756f288a4223b93aeb1a81e65746
+Completed Tasks: 351
+Completed Questions: 1,747
+Previously Completed Questions: 0
+Wall Runtime Seconds: 487.81
+Average Seconds Per Question: 0.28
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 1.013824
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+HVM | MAB - ACCURATE RETRIEVAL
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/ar/hvm/mab_ar_hvm.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/hvm/mab_accurate_retrieval/mab_ar_hvm.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 92.25%
+End-to-end accuracy              92.25%
+Correct                          369
+Evaluated questions              400
+Input records                    400
+Macro accuracy by question type  89.27%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Knowledge Update           7        9      77.78%
+Multi Session              14       15     93.33%
+Single Session Assistant   6        6      100.00%
+Single Session Preference  5        6      83.33%
+Single Session User        7        9      77.78%
+Temporal Reasoning         15       15     100.00%
+Unspecified                315      340    92.65%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source          Correct  Count  Accuracy
+--------------  -------  -----  --------
+eventqa_131072  95       100    95.00%
+eventqa_65536   97       100    97.00%
+eventqa_full    88       100    88.00%
+longmemeval_s*  54       60     90.00%
+ruler_qa1_197K  17       20     85.00%
+ruler_qa2_421K  18       20     90.00%
+
+SOURCE RUN
+----------
+Run Id: cdb7f9f5c1af435094375452e6361cd2
+Completed Tasks: 22
+Completed Questions: 400
+Previously Completed Questions: 0
+Wall Runtime Seconds: 351.13
+Average Seconds Per Question: 0.88
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 9.436433
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+HVM | MAB - LONG-RANGE UNDERSTANDING
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/lru/hvm/mab_lru_hvm.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/hvm/mab_long_range_understanding/mab_lru_hvm.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 38.24%
+End-to-end accuracy              38.24%
+Correct                          13
+Evaluated questions              34
+Input records                    34
+Macro accuracy by question type  38.24%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    13       34     38.24%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                   Correct  Count  Accuracy
+-----------------------  -------  -----  --------
+detective_qa             12       14     85.71%
+infbench_sum_eng_shots2  1        20     5.00%
+
+SOURCE RUN
+----------
+Run Id: e78d3bfee577400692e3710f80160dd5
+Completed Tasks: 27
+Completed Questions: 34
+Previously Completed Questions: 0
+Wall Runtime Seconds: 221.59
+Average Seconds Per Question: 6.52
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 2.112913
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+HVM | MAB - TEST-TIME LEARNING
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/ttl/hvm/mab_ttl_hvm.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/hvm/mab_test_time_learning/mab_ttl_hvm.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 35.00%
+End-to-end accuracy              35.00%
+Correct                          49
+Evaluated questions              140
+Input records                    140
+Macro accuracy by question type  35.00%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    49       140    35.00%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                            Correct  Count  Accuracy
+--------------------------------  -------  -----  --------
+icl_banking77_5900shot_balance    14       20     70.00%
+icl_clinic150_7050shot_balance    13       20     65.00%
+icl_nlu_8296shot_balance          14       20     70.00%
+icl_trec_coarse_6600shot_balance  2        20     10.00%
+icl_trec_fine_6400shot_balance    0        20     0.00%
+recsys_redial_full                6        40     15.00%
+
+SOURCE RUN
+----------
+Run Id: 185205fd0a854ef88470bff7c7a3cc54
+Completed Tasks: 6
+Completed Questions: 140
+Previously Completed Questions: 0
+Wall Runtime Seconds: 436.64
+Average Seconds Per Question: 3.12
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 2.262598
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+HVM | MAB - CONFLICT RESOLUTION
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/cr/hvm/mab_cr_hvm.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/hvm/mab_conflict_resolution/mab_cr_hvm.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 32.79%
+End-to-end accuracy              32.79%
+Correct                          60
+Evaluated questions              183
+Input records                    183
+Macro accuracy by question type  32.79%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    60       183    32.79%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                     Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+factconsolidation_mh_262k  0        23     0.00%
+factconsolidation_mh_32k   3        23     13.04%
+factconsolidation_mh_64k   4        22     18.18%
+factconsolidation_mh_6k    6        23     26.09%
+factconsolidation_sh_262k  14       23     60.87%
+factconsolidation_sh_32k   13       22     59.09%
+factconsolidation_sh_64k   11       25     44.00%
+factconsolidation_sh_6k    9        22     40.91%
+
+SOURCE RUN
+----------
+Run Id: 6582a1a94a054039853fa2d277492c44
+Completed Tasks: 8
+Completed Questions: 183
+Previously Completed Questions: 0
+Wall Runtime Seconds: 273.41
+Average Seconds Per Question: 1.49
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 1.722404
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+GRAPH | LONGMEMEVAL
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/longmemeval/graph/lme_graph.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/graph/longmemeval/lme_graph.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 49.00%
+End-to-end accuracy              49.00%
+Correct                          49
+Evaluated questions              100
+Input records                    100
+Macro accuracy by question type  48.54%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+Task-averaged accuracy           48.54%
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Single Session User        3        13     23.08%
+Single Session Preference  1        7      14.29%
+Single Session Assistant   9        11     81.82%
+Multi Session              15       29     51.72%
+Temporal Reasoning         9        26     34.62%
+Knowledge Update           12       14     85.71%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source       Correct  Count  Accuracy
+-----------  -------  -----  --------
+longmemeval  49       100    49.00%
+
+ABSTENTION
+----------
+Correct  Count  Accuracy
+-------  -----  --------
+6        6      100.00%
+
+SOURCE RUN
+----------
+Run Id: f6bb143144e144668497ba111066a720
+Completed Tasks: 100
+Completed Questions: 100
+Previously Completed Questions: 0
+Wall Runtime Seconds: 8,504.65
+Average Seconds Per Question: 85.05
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 86.577072
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+GRAPH | ECOMMERCE
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/ecommerce/graph/ecommerce_graph.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/graph/ecommerce/ecommerce_graph.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 89.47%
+End-to-end accuracy              89.47%
+Correct                          1,563
+Evaluated questions              1,747
+Input records                    1,747
+Macro accuracy by question type  87.59%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type               Correct  Count  Accuracy
+--------------------------  -------  -----  --------
+Abstention                  375      375    100.00%
+Cart Or Wishlist Recall     411      504    81.55%
+Conflict Resolution         48       55     87.27%
+Constraint Recall           124      148    83.78%
+Multi Session Synthesis     7        10     70.00%
+Preference Recall           146      166    87.95%
+Purchase History Recall     129      150    86.00%
+Recommendation From Memory  40       40     100.00%
+Return Support Recall       45       55     81.82%
+Temporal Update             238      244    97.54%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                         Correct  Count  Accuracy
+-----------------------------  -------  -----  --------
+ecommerce_conversations_final  1,563    1,747  89.47%
+
+ABSTENTION
+----------
+Correct  Count  Accuracy
+-------  -----  --------
+375      375    100.00%
+
+SOURCE RUN
+----------
+Run Id: cedd5c1c22c442f2af5f9c636944e624
+Completed Tasks: 351
+Completed Questions: 1,747
+Previously Completed Questions: 0
+Wall Runtime Seconds: 867.9
+Average Seconds Per Question: 0.5
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 1.566591
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+GRAPH | MAB - ACCURATE RETRIEVAL
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/ar/graph/mab_ar_graph.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/graph/mab_accurate_retrieval/mab_ar_graph.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 59.50%
+End-to-end accuracy              59.50%
+Correct                          238
+Evaluated questions              400
+Input records                    400
+Macro accuracy by question type  59.61%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Knowledge Update           7        9      77.78%
+Multi Session              4        15     26.67%
+Single Session Assistant   5        6      83.33%
+Single Session Preference  4        6      66.67%
+Single Session User        5        9      55.56%
+Temporal Reasoning         7        15     46.67%
+Unspecified                206      340    60.59%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source          Correct  Count  Accuracy
+--------------  -------  -----  --------
+eventqa_131072  73       100    73.00%
+eventqa_65536   72       100    72.00%
+eventqa_full    53       100    53.00%
+longmemeval_s*  32       60     53.33%
+ruler_qa1_197K  5        20     25.00%
+ruler_qa2_421K  3        20     15.00%
+
+SOURCE RUN
+----------
+Run Id: 58c03927616d49f39007820600dd56dd
+Completed Tasks: 22
+Completed Questions: 400
+Previously Completed Questions: 0
+Wall Runtime Seconds: 643.94
+Average Seconds Per Question: 1.61
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 5.532044
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+GRAPH | MAB - LONG-RANGE UNDERSTANDING
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/lru/graph/mab_lru_graph.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/graph/mab_long_range_understanding/mab_lru_graph.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 20.59%
+End-to-end accuracy              20.59%
+Correct                          7
+Evaluated questions              34
+Input records                    34
+Macro accuracy by question type  20.59%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    7        34     20.59%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                   Correct  Count  Accuracy
+-----------------------  -------  -----  --------
+detective_qa             7        14     50.00%
+infbench_sum_eng_shots2  0        20     0.00%
+
+SOURCE RUN
+----------
+Run Id: 57cf981cd1e14cdcbd2edbd3ca9a064e
+Completed Tasks: 27
+Completed Questions: 34
+Previously Completed Questions: 0
+Wall Runtime Seconds: 426.46
+Average Seconds Per Question: 12.54
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 3.509481
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+GRAPH | MAB - TEST-TIME LEARNING
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/ttl/graph/mab_ttl_graph.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/graph/mab_test_time_learning/mab_ttl_graph.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 10.00%
+End-to-end accuracy              10.00%
+Correct                          14
+Evaluated questions              140
+Input records                    140
+Macro accuracy by question type  10.00%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    14       140    10.00%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                            Correct  Count  Accuracy
+--------------------------------  -------  -----  --------
+icl_banking77_5900shot_balance    6        20     30.00%
+icl_clinic150_7050shot_balance    0        20     0.00%
+icl_nlu_8296shot_balance          0        20     0.00%
+icl_trec_coarse_6600shot_balance  3        20     15.00%
+icl_trec_fine_6400shot_balance    0        20     0.00%
+recsys_redial_full                5        40     12.50%
+
+SOURCE RUN
+----------
+Run Id: 68a1a980f06943138a8087899a43a916
+Completed Tasks: 6
+Completed Questions: 140
+Previously Completed Questions: 0
+Wall Runtime Seconds: 1,319.08
+Average Seconds Per Question: 9.42
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 4.481695
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+GRAPH | MAB - CONFLICT RESOLUTION
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/cr/graph/mab_cr_graph.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/graph/mab_conflict_resolution/mab_cr_graph.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 79.78%
+End-to-end accuracy              79.78%
+Correct                          146
+Evaluated questions              183
+Input records                    183
+Macro accuracy by question type  79.78%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    146      183    79.78%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                     Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+factconsolidation_mh_262k  9        23     39.13%
+factconsolidation_mh_32k   14       23     60.87%
+factconsolidation_mh_64k   12       22     54.55%
+factconsolidation_mh_6k    20       23     86.96%
+factconsolidation_sh_262k  22       23     95.65%
+factconsolidation_sh_32k   22       22     100.00%
+factconsolidation_sh_64k   25       25     100.00%
+factconsolidation_sh_6k    22       22     100.00%
+
+SOURCE RUN
+----------
+Run Id: 4671b8b2a4c64982bfde1f861ba2ae2c
+Completed Tasks: 8
+Completed Questions: 183
+Previously Completed Questions: 0
+Wall Runtime Seconds: 94.07
+Average Seconds Per Question: 0.51
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 0.148133
+
+========================================================================
+
+
+############################################################################################
+
+========================================================================
+BINARY ROUTER | LONGMEMEVAL
+========================================================================
+
+Generated:       2026-08-10T00:40:31+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/longmemeval/binary_router/lme_binary_router_v2.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/binary_router/longmemeval/lme_binary_router_v2.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 78.57%
+End-to-end accuracy              78.57%
+Correct                          11
+Evaluated questions              14
+Input records                    14
+Macro accuracy by question type  78.57%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+Task-averaged accuracy           78.57%
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Single Session Preference  5        7      71.43%
+Knowledge Update           6        7      85.71%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source       Correct  Count  Accuracy
+-----------  -------  -----  --------
+longmemeval  11       14     78.57%
+
+EVALUATION SCOPE
+----------------
+Question Types: single-session-preference, knowledge-update
+Evaluates Every Result Record: yes
+Note: Binary-router evaluation is intentionally limited to the two routed LongMemEval types. The evaluator does not balance or subsample test records; every result row in the selected JSONL is scored.
+
+SOURCE RUN
+----------
+Run Id: a32754a0cb3c42888ac59ae01adc28e0
+Completed Tasks: 14
+Completed Questions: 14
+Previously Completed Questions: 0
+Wall Runtime Seconds: 928.89
+Average Seconds Per Question: 66.35
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 4.32799
+
+========================================================================
+
+
+ROUTING SYSTEM DEFINITIONS
+--------------------------
+Binary Router:
+  Router Type: context-only binary architecture router
+  Question Type Scope: single-session-preference, knowledge-update
+  Routes:
+    Single Session Preference: hvm
+    Knowledge Update: episodic
+  Evaluation Note: The binary router is a routing wrapper over HVM and Episodic, not a seventh memory architecture. Its evaluator scores every result record present in the JSONL and does not rebalance the test set.
+
+============================================================================================

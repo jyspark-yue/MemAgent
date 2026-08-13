@@ -1,0 +1,50 @@
+========================================================================
+EPISODIC | MAB - LONG-RANGE UNDERSTANDING
+========================================================================
+
+Generated:       2026-08-10T00:29:01+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/lru/episodic/mab_lru_episodic.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/episodic/mab_long_range_understanding/mab_lru_episodic.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 32.35%
+End-to-end accuracy              32.35%
+Correct                          11
+Evaluated questions              34
+Input records                    34
+Macro accuracy by question type  32.35%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    11       34     32.35%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                   Correct  Count  Accuracy
+-----------------------  -------  -----  --------
+detective_qa             11       14     78.57%
+infbench_sum_eng_shots2  0        20     0.00%
+
+SOURCE RUN
+----------
+Run Id: 9d683a42a878431084481089404d1c1a
+Completed Tasks: 27
+Completed Questions: 34
+Previously Completed Questions: 0
+Wall Runtime Seconds: 88.53
+Average Seconds Per Question: 2.6
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 1.352242
+
+========================================================================

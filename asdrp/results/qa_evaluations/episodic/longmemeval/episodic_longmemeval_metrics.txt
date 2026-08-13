@@ -1,0 +1,61 @@
+========================================================================
+EPISODIC | LONGMEMEVAL
+========================================================================
+
+Generated:       2026-08-10T00:27:54+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/longmemeval/episodic/lme_episodic.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/episodic/longmemeval/lme_episodic.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 73.00%
+End-to-end accuracy              73.00%
+Correct                          73
+Evaluated questions              100
+Input records                    100
+Macro accuracy by question type  74.41%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+Task-averaged accuracy           74.41%
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Single Session User        9        13     69.23%
+Single Session Preference  4        7      57.14%
+Single Session Assistant   11       11     100.00%
+Multi Session              20       29     68.97%
+Temporal Reasoning         17       26     65.38%
+Knowledge Update           12       14     85.71%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source       Correct  Count  Accuracy
+-----------  -------  -----  --------
+longmemeval  73       100    73.00%
+
+ABSTENTION
+----------
+Correct  Count  Accuracy
+-------  -----  --------
+5        6      83.33%
+
+SOURCE RUN
+----------
+Run Id: 12cbcb5e7c2c4f059d087d5a51f2ff51
+Completed Tasks: 2
+Completed Questions: 2
+Previously Completed Questions: 98
+Wall Runtime Seconds: 470.17
+Average Seconds Per Question: 235.09
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 0.063414
+
+========================================================================
