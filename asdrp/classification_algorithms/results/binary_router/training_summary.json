@@ -1,0 +1,12 @@
+{
+  "preparation_seconds": 28.071385791059583,
+  "vectorization_seconds": 26.82786070788279,
+  "classifier_selection_and_fit_seconds": 12.683764250017703,
+  "evaluation_seconds": 3.015159083995968,
+  "mean_test_prediction_seconds": 0.215368505999712,
+  "wall_runtime_seconds": 71.68728791596368,
+  "vocabulary_size": 75000,
+  "feature_count": 225015,
+  "train_session_count": 21813,
+  "test_session_count": 6664
+}

@@ -1,0 +1,62 @@
+{
+  "artifact_version": 4,
+  "model_type": "session_pool_tfidf_linear_memory_router",
+  "dataset": "longmemeval",
+  "context_only": true,
+  "question_text_in_features": false,
+  "question_type_in_features": false,
+  "labels": [
+    "single-session-preference",
+    "knowledge-update"
+  ],
+  "label_to_memory": {
+    "single-session-preference": "hvm",
+    "knowledge-update": "episodic"
+  },
+  "evaluation_contract": {
+    "test_file_sha256": "83170cc3be8883e92fce602f6e8a740eb5c333590f2b765165db1fad389b65b7",
+    "question_ids": [
+      "6aeb4375",
+      "830ce83f",
+      "ce6d2d27",
+      "2698e78f",
+      "b6019101",
+      "618f13b2",
+      "01493427",
+      "8a2466db",
+      "06878be2",
+      "38146c39",
+      "75f70248",
+      "1da05512",
+      "a89d7624",
+      "07b6f563"
+    ],
+    "question_count": 14
+  },
+  "feature_config": {
+    "max_sessions": 512,
+    "max_chars_per_session": 2400,
+    "recent_fraction": 0.25
+  },
+  "feature_extractor": {
+    "word_ngrams": [
+      1,
+      3
+    ],
+    "max_features": 75000,
+    "sublinear_tf": true,
+    "pooling": [
+      "global_session_max",
+      "cross_session_repetition",
+      "recent_session_max",
+      "structural_and_cue_features"
+    ],
+    "uses_all_normal_longmemeval_m_sessions": true
+  },
+  "classifier": {
+    "selected_by": "4x repeated stratified 5-fold CV on training only",
+    "selected_model": "LinearSVC(C=0.03)",
+    "seed": 224
+  },
+  "model_artifact": "model/tfidf_svc.joblib"
+}

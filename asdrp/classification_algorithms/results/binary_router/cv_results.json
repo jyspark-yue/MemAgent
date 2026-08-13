@@ -1,0 +1,67 @@
+{
+  "selection_metric": "macro_f1",
+  "test_split_used_for_selection": false,
+  "selected_model": "LinearSVC(C=0.03)",
+  "results": [
+    {
+      "model": "LinearSVC(C=0.03)",
+      "mean_macro_f1": 0.9063834776334776,
+      "std_macro_f1": 0.061974357982870286,
+      "folds": 20
+    },
+    {
+      "model": "LinearSVC(C=0.1)",
+      "mean_macro_f1": 0.9063834776334776,
+      "std_macro_f1": 0.061974357982870286,
+      "folds": 20
+    },
+    {
+      "model": "LinearSVC(C=0.3)",
+      "mean_macro_f1": 0.9063834776334776,
+      "std_macro_f1": 0.061974357982870286,
+      "folds": 20
+    },
+    {
+      "model": "LinearSVC(C=1)",
+      "mean_macro_f1": 0.9063834776334776,
+      "std_macro_f1": 0.061974357982870286,
+      "folds": 20
+    },
+    {
+      "model": "LinearSVC(C=3)",
+      "mean_macro_f1": 0.9063834776334776,
+      "std_macro_f1": 0.061974357982870286,
+      "folds": 20
+    },
+    {
+      "model": "LogisticRegression(C=0.3)",
+      "mean_macro_f1": 0.9063834776334776,
+      "std_macro_f1": 0.061974357982870286,
+      "folds": 20
+    },
+    {
+      "model": "LogisticRegression(C=1)",
+      "mean_macro_f1": 0.9063834776334776,
+      "std_macro_f1": 0.061974357982870286,
+      "folds": 20
+    },
+    {
+      "model": "LogisticRegression(C=3)",
+      "mean_macro_f1": 0.9063834776334776,
+      "std_macro_f1": 0.061974357982870286,
+      "folds": 20
+    },
+    {
+      "model": "LogisticRegression(C=0.1)",
+      "mean_macro_f1": 0.9059451659451658,
+      "std_macro_f1": 0.08180450906418983,
+      "folds": 20
+    },
+    {
+      "model": "LogisticRegression(C=0.03)",
+      "mean_macro_f1": 0.8772853535353535,
+      "std_macro_f1": 0.10523258581990569,
+      "folds": 20
+    }
+  ]
+}
