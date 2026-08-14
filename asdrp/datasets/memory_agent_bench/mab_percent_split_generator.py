@@ -2,7 +2,7 @@
 # File: mab_percent_split_generator.py
 #
 # Description:
-#   Create deterministic, mutually exclusive LongMemEval train/test files from the
+#   Create deterministic, mutually exclusive train/test files from the
 #   MemoryAgentBench datasets.
 #
 #   Default split: 80% train / 20% test.
@@ -140,6 +140,14 @@ def stable_text(value: Any) -> str:
 
 def stable_hash(value: Any) -> str:
     return hashlib.sha256(stable_text(value).encode("utf-8")).hexdigest()
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def normalize_label(value: Any) -> str:
@@ -506,6 +514,7 @@ def split_by_qa(
         ),
         "shared_context_rows": shared_context_rows,
         "context_disjoint": shared_context_rows == 0,
+        "selected_test_qa_content_sha256": sorted(test_identities),
         "all_strata": dict(sorted(all_strata.items())),
         "train_strata": dict(sorted(train_strata.items())),
         "test_strata": dict(sorted(test_strata.items())),
@@ -598,6 +607,7 @@ def split_by_context_row(
         "qa_id_overlap_count": 0,
         "shared_context_rows": 0,
         "context_disjoint": True,
+        "selected_test_context_sha256": sorted(test_groups),
         "all_strata": dict(sorted(source_counts(rows).items())),
         "train_strata": dict(sorted(source_counts(train_rows).items())),
         "test_strata": dict(sorted(source_counts(test_rows).items())),
@@ -694,6 +704,8 @@ def main() -> None:
                 "dataset": "MemoryAgentBench",
                 "input": str(input_path),
                 "input_stem": input_stem,
+                "input_file_sha256": file_sha256(input_path),
+                "input_records_sha256": stable_hash(rows),
                 "seed": args.seed,
                 "train_output": str(train_path),
                 "test_output": str(test_path),

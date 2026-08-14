@@ -97,6 +97,14 @@ def stable_hash(value: Any) -> str:
     return hashlib.sha256(stable_text(value).encode("utf-8")).hexdigest()
 
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def first_present(record: dict[str, Any], candidates: Sequence[str]) -> Any | None:
     for candidate in candidates:
         if candidate in record and record[candidate] not in (None, ""):
@@ -255,6 +263,7 @@ def grouped_stratified_sample(
         "evaluation_group_strata": dict(sorted(selected_group_strata.items())),
         "selected_group_ids": sorted(selected_groups),
         "evaluation_sha256": stable_hash(evaluation),
+        "remainder_sha256": stable_hash(remainder),
     }
     return evaluation, remainder, report
 
@@ -333,6 +342,8 @@ def main() -> None:
         {
             "dataset": "LongMemEval",
             "input": str(args.input),
+            "input_file_sha256": file_sha256(args.input),
+            "input_records_sha256": stable_hash(records),
             "train_fraction": args.train_fraction,
             "test_fraction": test_fraction,
             "train_records": len(train_records),

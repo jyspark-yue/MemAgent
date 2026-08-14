@@ -58,13 +58,13 @@ MemAgent/
 │   │   ├── dataset_generation/        # EcommerceMemEval QA generation and validation
 │   │   └── synthetic-conversation-generation/
 │   │                                    # Separate source-conversation generator
+│   ├── datasets/                     # Benchmark download, decoding, and split tools
 │   ├── dataset_adapters.py           # Benchmark -> shared evaluation schema
 │   ├── eval_schemas.py               # Shared evaluation records
 │   ├── evaluate_agents_wcost.py      # Main architecture evaluator
 │   ├── openai_embedder.py            # Batched embedding service
 │   ├── qdrant_retry.py               # Qdrant retry helpers
 │   └── runtime.py                    # Model calls, retries, usage, and cost tracking
-├── datasets/                          # Benchmark download, decoding, and split tools
 ├── result_scripts/                    # Judging, metrics, repair, comparisons, and figures
 ├── tests/                             # Unit, property, schema, and optional live tests
 ├── pytest.ini
@@ -78,8 +78,8 @@ MemAgent/
 | Six memory architectures | `asdrp/memory/`, `asdrp/agent/` |
 | Shared evaluation protocol | `asdrp/evaluate_agents_wcost.py` |
 | Benchmark normalization | `asdrp/dataset_adapters.py` |
-| LongMemEval split | `datasets/lme_percent_split_generator.py` |
-| MemoryAgentBench preparation | `datasets/download_mab.py`, `datasets/mab_ttl_id_decoder.py`, `datasets/mab_percent_split_generator.py` |
+| LongMemEval preparation | `asdrp/datasets/longmemeval_v1/download_lme.py`, `asdrp/datasets/longmemeval_v1/lme_percent_split_generator.py` |
+| MemoryAgentBench preparation | `asdrp/datasets/memory_agent_bench/download_mab.py`, `asdrp/datasets/memory_agent_bench/mab_ttl_id_decoder.py`, `asdrp/datasets/memory_agent_bench/mab_percent_split_generator.py` |
 | EcommerceMemEval construction | `asdrp/ecommerce_memeval_generator/dataset_generation/` |
 | Binary architecture router | `asdrp/classification_algorithms/train_binary_router.py`, `binary_router.py` |
 | Router confusion matrix | `asdrp/classification_algorithms/create_confusion_matrix.py` |
@@ -128,18 +128,114 @@ docker compose up -d qdrant
 
 Use `--qdrant-url` when Qdrant runs elsewhere.
 
+### 4. Download and prepare external benchmarks
+
+LongMemEval and MemoryAgentBench are not stored in this repository because the raw data and generated splits are large. The repository instead keeps the download, preprocessing, and split code needed to reconstruct them. The upstream benchmark data remains subject to the original projects' licenses and terms.
+
+For paper reproduction, **do not rely on the random seed alone**. An exact split also depends on the exact upstream dataset revision, the split-script version, and the split arguments. The download scripts therefore record the resolved Hugging Face revision and source-file hashes, while the split scripts record the seed, source hashes, selected test identities, and output hashes. Commit these small manifests even when the large JSON files are ignored.
+
+Both split generators use `20260720` as their default seed. The paper commands below pass it explicitly so the intended configuration is visible.
+
+#### LongMemEval
+
+The paper uses the cleaned `LongMemEval_M` source. The official LongMemEval repository distributes the cleaned benchmark through Hugging Face. Download only the `m` variant unless another LongMemEval file is needed for a separate experiment.
+
+```bash
+python asdrp/datasets/longmemeval_v1/download_lme.py --variant m
+```
+
+This writes:
+
+```text
+asdrp/datasets/longmemeval_v1/
+├── longmemeval_m_cleaned.json          # large; do not commit
+└── longmemeval_source_manifest.json    # small; commit
+```
+
+Create the paper's 80/20 split with the fixed seed:
+
+```bash
+python asdrp/datasets/longmemeval_v1/lme_percent_split_generator.py \
+  asdrp/datasets/longmemeval_v1/longmemeval_m_cleaned.json \
+  --output-dir asdrp/datasets/longmemeval_v1/splits/longmemeval_20pct \
+  --train-fraction 0.80 \
+  --seed 20260720 \
+  --write-manifest
+```
+
+The test file should contain 100 of the 500 LongMemEval questions. Abstention samples are stratified as their own effective type when `question_id` ends in `_abs`. The split manifest records the exact selected question IDs and hashes, so it is the canonical record of which questions belong to the paper test set.
+
+Keep the split manifest in Git, but ignore the generated train/test JSON files:
+
+```text
+asdrp/datasets/longmemeval_v1/splits/longmemeval_20pct/
+├── longmemeval_20pct_train.json             # large; do not commit
+├── longmemeval_20pct_test.json              # large; do not commit
+└── longmemeval_20pct_split_manifest.json    # small; commit
+```
+
+#### MemoryAgentBench
+
+Download the official Hugging Face dataset and export each benchmark split to JSON:
+
+```bash
+python asdrp/datasets/memory_agent_bench/download_mab.py
+```
+
+The downloader also saves `entity2id.json`, which MemoryAgentBench requires for the recommendation/Test-Time Learning entity mapping, and writes `memory_agent_bench_source_manifest.json` with the resolved upstream revision and hashes.
+
+Decode the Test-Time Learning answers before creating the paper split:
+
+```bash
+python asdrp/datasets/memory_agent_bench/mab_ttl_id_decoder.py
+```
+
+Then create the fixed 80/20 task splits:
+
+```bash
+python asdrp/datasets/memory_agent_bench/mab_percent_split_generator.py \
+  asdrp/datasets/memory_agent_bench/separated_splits/Accurate_Retrieval.json \
+  asdrp/datasets/memory_agent_bench/separated_splits/Conflict_Resolution.json \
+  asdrp/datasets/memory_agent_bench/separated_splits/Long_Range_Understanding.json \
+  asdrp/datasets/memory_agent_bench/separated_splits/Test_Time_Learning_decoded.json \
+  --output-dir asdrp/datasets/memory_agent_bench/splits/mab_20pct \
+  --train-fraction 0.80 \
+  --split-unit qa \
+  --seed 20260720 \
+  --write-manifest
+```
+
+`--split-unit qa` is intentional for the paper split. MemoryAgentBench often stores many aligned QA pairs in one shared context row, and some task types occur in only one row. QA mode keeps identical question/answer content wholly in one split while allowing the shared context row itself to appear in both train and test. This preserves task coverage but is **not context-disjoint**. Use `--split-unit row` only when a strict context-disjoint split is required; its composition will differ from the paper split.
+
+For the paper configuration, the resulting test counts are 400 Accurate Retrieval, 34 Long-Range Understanding, 140 Test-Time Learning, and 183 Conflict Resolution questions. Treat a count mismatch as a sign that the upstream data, preprocessing, split arguments, or code revision differs from the paper setup.
+
+#### What to commit
+
+Commit the reproducibility metadata, not the large benchmark payloads. At minimum, keep:
+
+- `longmemeval_source_manifest.json`;
+- `longmemeval_20pct_split_manifest.json`;
+- `memory_agent_bench_source_manifest.json`;
+- each `mab_20pct/*_split_manifest.json`;
+- the download, decoder, and split scripts themselves.
+
+The source manifests identify the upstream revision and source hashes. The split manifests identify the exact split seed, input hashes, selected test identities, and generated-output hashes. Together with the Git commit, these are enough to detect whether a regenerated benchmark matches the paper data exactly.
+
+If the current local paper splits already exist, **preserve their manifests before deleting the large files**. Check the `seed` field in those manifests and compare the recorded train/test hashes against a regeneration. If the manifest does not say `20260720`, use the seed recorded there instead. A matching seed by itself is not proof of an identical split.
+
 ## Recommended paper workflow
 
 The shortest complete workflow is:
 
-1. Start Qdrant.
-2. Run each memory architecture on the intended benchmark split.
-3. Audit the generated outputs with `repair_evaluation_results.py`; rerun unresolved questions if needed.
-4. Judge the generated answers with `evaluate_qa_runner.py` and write `asdrp/results/final_eval_metrics.txt`.
-5. Generate the cross-benchmark heatmap from that consolidated metrics file.
-6. Evaluate and judge the binary router.
-7. Run the matched HVM/Episodic/router apples-to-apples comparison.
-8. Generate the router confusion matrix from the classifier `metrics.json`.
+1. Download the external benchmarks and regenerate the fixed paper splits; verify their manifests.
+2. Start Qdrant.
+3. Run each memory architecture on the intended benchmark split.
+4. Audit the generated outputs with `repair_evaluation_results.py`; rerun unresolved questions if needed.
+5. Judge the generated answers with `evaluate_qa_runner.py` and write `asdrp/results/final_eval_metrics.txt`.
+6. Generate the cross-benchmark heatmap from that consolidated metrics file.
+7. Evaluate and judge the binary router.
+8. Run the matched HVM/Episodic/router apples-to-apples comparison.
+9. Generate the router confusion matrix from the classifier `metrics.json`.
 
 The sections below give generic command forms and every supported command-line adjustment exposed by the attached evaluation utilities. Paper-specific values belong in result metadata and experiment records, not in the generic run syntax.
 
@@ -548,6 +644,7 @@ python -m asdrp.classification_algorithms.create_confusion_matrix RESULTS [OPTIO
 
 For each reported experiment, preserve:
 
+- the upstream benchmark source manifest and resolved dataset revision;
 - the exact benchmark split and split manifest;
 - the code commit;
 - the evaluator summary sidecar;
@@ -559,6 +656,8 @@ For each reported experiment, preserve:
 - the router model and data manifest for routed runs.
 
 Use canonical benchmark files or split manifests as the source of truth for question identity and category counts. Do not recover category denominators from individual architecture outputs when a canonical manifest is available.
+
+The LongMemEval and MemoryAgentBench split scripts default to seed `20260720`, but reproducibility requires more than the seed. Verify the source-file hash, resolved upstream revision, split arguments, selected test identities, and output hashes recorded in the committed manifests. If any of these differ, treat the regenerated data as a different split until the mismatch is explained.
 
 The paper's router results should be read as a small proof of concept. The 14-history test set is too small for broad routing claims, and the category-to-architecture mapping was selected from the architecture study rather than an independent validation set. Fixed and routed answers were also generated in separate runs. These limits are part of the experimental interpretation, not implementation errors.
 
