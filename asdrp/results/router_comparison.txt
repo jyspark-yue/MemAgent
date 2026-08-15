@@ -1,0 +1,102 @@
+==========================================================
+LONGMEMEVAL BINARY ROUTER V3 - APPLES-TO-APPLES COMPARISON
+==========================================================
+
+EVALUATION SCOPE
+----------------
+Canonical set: exactly the 14 question IDs in the Binary Router evaluation file
+  - knowledge-update: 7
+  - single-session-preference: 7
+Question-ID SHA256: c2db19e4b20062edd31b6e05a21837be8eebc0596274fcf8e2e5314a4f925beb
+
+OVERALL PERFORMANCE
+-------------------
+System                             Correct  Accuracy  Macro by Type
+---------------------------------  -------  --------  -------------
+Episodic                             11/14    78.57%         78.57%
+HVM                                  12/14    85.71%         85.71%
+Binary Router (end-to-end)           11/14    78.57%         78.57%
+Router (fixed standalone outputs)    13/14    92.86%         92.86%
+Type Oracle                          13/14    92.86%         92.86%
+Best-of-Two Oracle                   13/14    92.86%         92.86%
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+
+knowledge-update
+System                             Correct  Accuracy
+---------------------------------  -------  --------
+Episodic                               7/7   100.00%
+HVM                                    6/7    85.71%
+Binary Router (end-to-end)             6/7    85.71%
+Router (fixed standalone outputs)      7/7   100.00%
+Type Oracle                            7/7   100.00%
+Best-of-Two Oracle                     7/7   100.00%
+
+single-session-preference
+System                             Correct  Accuracy
+---------------------------------  -------  --------
+Episodic                               4/7    57.14%
+HVM                                    6/7    85.71%
+Binary Router (end-to-end)             5/7    71.43%
+Router (fixed standalone outputs)      6/7    85.71%
+Type Oracle                            6/7    85.71%
+Best-of-Two Oracle                     6/7    85.71%
+
+ROUTING PERFORMANCE
+-------------------
+Question-type classification: 13/14 (92.86%)
+Selected memories: episodic=6, hvm=8
+
+True Type                  Predicted Type             Count
+-------------------------  -------------------------  -----
+knowledge-update           knowledge-update               6
+knowledge-update           single-session-preference      1
+single-session-preference  single-session-preference      7
+
+KEY DIFFERENCES
+---------------
+Comparison                  Difference
+--------------------------  ----------
+Binary Router vs HVM          -7.14 pp
+Binary Router vs Episodic     +0.00 pp
+Fixed-output Router vs HVM    +7.14 pp
+Type Oracle vs HVM            +7.14 pp
+Type Oracle vs Episodic      +14.29 pp
+Best-of-Two Oracle vs HVM     +7.14 pp
+
+PER-QUESTION RESULTS
+--------------------
+Question ID  True Type                  Predicted                  Selected  Epi  HVM  Router  Fixed  Oracle
+-----------  -------------------------  -------------------------  --------  ---  ---  ------  -----  ------
+b6019101     knowledge-update           knowledge-update           episodic   Y    Y     Y       Y      Y   
+ce6d2d27     knowledge-update           knowledge-update           episodic   Y    Y     Y       Y      Y   
+01493427     knowledge-update           knowledge-update           episodic   Y    Y     Y       Y      Y   
+6aeb4375     knowledge-update           knowledge-update           episodic   Y    Y     Y       Y      Y   
+830ce83f     knowledge-update           knowledge-update           episodic   Y    N     N       Y      Y   
+2698e78f     knowledge-update           knowledge-update           episodic   Y    Y     Y       Y      Y   
+38146c39     single-session-preference  single-session-preference  hvm        N    Y     N       Y      Y   
+06878be2     single-session-preference  single-session-preference  hvm        Y    Y     Y       Y      Y   
+8a2466db     single-session-preference  single-session-preference  hvm        Y    Y     Y       Y      Y   
+618f13b2     knowledge-update           single-session-preference  hvm        Y    Y     Y       Y      Y   
+1da05512     single-session-preference  single-session-preference  hvm        N    Y     Y       Y      Y   
+75f70248     single-session-preference  single-session-preference  hvm        N    N     N       N      N   
+07b6f563     single-session-preference  single-session-preference  hvm        Y    Y     Y       Y      Y   
+a89d7624     single-session-preference  single-session-preference  hvm        Y    Y     Y       Y      Y   
+
+NOTES
+-----
+- Binary Router (end-to-end): the actual judged answers produced by the router run.
+- Router (fixed standalone outputs): uses the router's actual architecture decision, but scores the
+  already-judged standalone HVM/Episodic answer for that exact question. This isolates routing
+  quality from fresh memory-build / generation variance.
+- Type Oracle: HVM for single-session-preference and Episodic for knowledge-update, using true type.
+- Best-of-Two Oracle: hindsight ceiling; correct when either HVM or Episodic was correct. Not realizable.
+- No answers are re-judged and no LLM calls are made by this script.
+
+INPUT FILES
+-----------
+Router eval:       asdrp/results/qa_evaluations/binary_router/longmemeval/lme_binary_router_v2.eval-results-gpt-5.6-sol.jsonl
+HVM eval:          asdrp/results/qa_evaluations/hvm/longmemeval/lme_hvm.eval-results-gpt-5.6-sol.jsonl
+Episodic eval:     asdrp/results/qa_evaluations/episodic/longmemeval/lme_episodic.eval-results-gpt-5.6-sol.jsonl
+Reference file:    asdrp/datasets/longmemeval_v1/splits/longmemeval_20pct/longmemeval_20pct_test.json

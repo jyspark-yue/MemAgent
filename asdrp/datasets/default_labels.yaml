@@ -1,0 +1,26 @@
+longmemeval_v1:
+  - single-session-user
+  - single-session-preference
+  - single-session-assistant
+  - multi-session
+  - temporal-reasoning
+  - knowledge-update
+  - abstention
+
+memoryagentbench:
+  - accurate_retrieval
+  - test_time_learning
+  - long_range_understanding
+  - conflict_resolution
+
+ecommerce_eval:
+  - abstention
+  - cart_or_wishlist_recall
+  - conflict_resolution
+  - constraint_recall
+  - multi_session_synthesis
+  - preference_recall
+  - purchase_history_recall
+  - recommendation_from_memory
+  - return_support_recall
+  - temporal_update

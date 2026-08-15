@@ -2,370 +2,367 @@
 # File: episodic_agent.py
 #
 # Description:
-#   This agent is equipped with episodic memory.
+#   Answers questions from fast episodic memory by reconstructing a focused
+#   timeline from source-derived or structured event records. It keeps strong
+#   evidence from being crowded out by chronology while limiting retrieval and
+#   prompt work that does not materially improve the answer.
 #
-# Authors:
-#   @author     Eric Vincent Fernandes
-#               - Created episodic_agent.py
-#
-# Date:
-#   Created:    August 5, 2025 (Eric Vincent Fernandes)
-#   Modified:   October 5, 2025 (Eric Vincent Fernandes)
+#   - Uses smaller candidate pools and event neighborhoods while retaining extra
+#     breadth for temporal, multi-event, update, ecommerce, and EventQA questions.
+#   - Keeps strong retrieval recall for temporal, multi-event, update, conflict,
+#     recommendation, and EventQA questions without adding extra LLM calls.
+#   - Prefers current state for update-style questions while preserving historical
+#     state when the question explicitly asks for it.
+#   - Selects the most relevant records before sorting them into source order, so
+#     early low-value neighbors cannot consume the answer context budget.
+#   - Uses exact source anchors when hybrid retrieval surfaces wording that event
+#     extraction may have compressed.
+#   - Uses cheap character estimates for relevance preselection and leaves exact
+#     token-safe packing to the existing context packer.
+#   - Omits empty metadata and retrieval-only scores from the answer prompt.
+#   - Reduces exact global source timelines when they exceed the context budget.
+#   - Gives the answer model explicit rules for timestamps, source order, updates,
+#     contradictions, attribution, abstention, and multi-event reasoning.
+#   - Prints compact stage updates and a 60-second generation heartbeat so slow API
+#     responses remain visibly active without flooding the terminal.
 #############################################################################
 
-from dotenv import load_dotenv, find_dotenv
-load_dotenv(find_dotenv())
+from __future__ import annotations
 
-import time
 import asyncio
-from typing import List
+import time
+from dataclasses import replace
 
-from llama_index.core.base.llms.types import ChatMessage
-from llama_index.core.llms import LLM
-from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
-from llama_index.core.utils import count_tokens
-from llama_index.llms.google_genai import GoogleGenAI
-from google.genai import types
-
-from asdrp.agent.base import AgentReply
+from asdrp.agent.BaseAgent import AgentAnswer, BaseAgent
+from asdrp.eval_schemas import EvaluationQuestion, RetrievalPlan, RetrievedMemory
 from asdrp.memory.episodic_memory import EpisodicMemoryBlock
 
-_safety_settings = [
-    types.SafetySetting(
-        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
-        # threshold=types.HarmBlockThreshold.OFF,
-        threshold=types.HarmBlockThreshold.BLOCK_NONE,
-    ),
-    types.SafetySetting(
-        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-        # threshold=types.HarmBlockThreshold.OFF,
-        threshold=types.HarmBlockThreshold.BLOCK_NONE,
-    ),
-    types.SafetySetting(
-        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-        # threshold=types.HarmBlockThreshold.OFF,
-        threshold=types.HarmBlockThreshold.BLOCK_NONE,
-    ),
-    types.SafetySetting(
-        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-        # threshold=types.HarmBlockThreshold.OFF,
-        threshold=types.HarmBlockThreshold.BLOCK_NONE,
-    )
-]
 
-_gen_cfg = types.GenerateContentConfig(safety_settings=_safety_settings, temperature=0.2)
+class EpisodicAgent(BaseAgent):
+    # Rebuild answers from stored events, exact source evidence, and their order.
+    #
+    # Retrieval decides which evidence matters first. The final context then restores
+    # source order so chronology helps reasoning without letting the oldest retrieved
+    # records automatically take the whole token budget.
 
-def _get_default_llm(callback_manager=CallbackManager(handlers=[TokenCountingHandler()])) -> LLM:
-    return GoogleGenAI(
-        model="gemini-2.5-flash-lite",
-        temperature=0.2,
-        max_retries=100,
-        callback_manager=callback_manager,
-        generation_config=_gen_cfg,
-    )
+    memory_block_type = EpisodicMemoryBlock  # Stores each source event as an episode.
 
-class EpisodicAgent:
+    async def answer(
+        self,
+        question: EvaluationQuestion,
+        default_plan: RetrievalPlan,
+    ) -> AgentAnswer:
+        # Retrieve event neighborhoods and reason over their temporal sequence.
 
-    def __init__(self):
-        self.llm = _get_default_llm()
-        self.memory_block = EpisodicMemoryBlock(name="episodic_memory")
-        self.query_input_tokens = 0     # Number of tokens passed into the LLM within this agent
-        self.query_output_tokens = 0    # Number of tokens returned by the LLM within this agent
-        self.query_time = 0             # Duration of time the LLM took to respond
+        plan, strategy = self._select_retrieval_plan(question, default_plan)
+        memories, retrieval_seconds = await self._retrieve(question.text, plan)
+        print(
+            f"[episodic] retrieved | memories={len(memories):,} | "
+            f"retrieval={retrieval_seconds:.2f}s | preparing",
+            flush=True,
+        )
 
-    async def achat(self, user_msg: str) -> AgentReply:
+        preparation_started = time.perf_counter()  # Starts the context timer.
+        if plan.mode in {"all", "global"}:
+            ordered_context_memories = sorted(memories, key=self._timeline_sort_key)
+            context, context_tokens = await self._reduce_global_context(
+                question=question.text,
+                memories=ordered_context_memories,
+                final_token_budget=plan.max_context_tokens,
+                formatter=self._format_episode,
+                system_prompt=(
+                    "Compress episodic memory into a concise question-relevant "
+                    "timeline. Use only the supplied memory."
+                ),
+                reduction_instruction=(
+                    "Keep only evidence that can answer or disambiguate the question. "
+                    "Preserve exact names, numbers, dates, IDs, negation, ownership, "
+                    "constraints, corrections, conflicts, and relevant state changes. "
+                    "Keep timestamps distinct from source order. Do not infer facts. "
+                    "Be concise."
+                ),
+            )
+        else:
+            # Select by relevance before chronology. This fixes the common failure where
+            # a large neighbor window returns many early records and pack_context stops
+            # before reaching a later, much stronger seed.
+            context_memories = self._select_context_memories(
+                memories,
+                max_tokens=plan.max_context_tokens,
+            )
+            ordered_context_memories = sorted(
+                context_memories,
+                key=self._timeline_sort_key,
+            )
+            context, context_tokens = self._pack_context(
+                ordered_context_memories,
+                max_tokens=plan.max_context_tokens,
+                formatter=self._format_episode,
+            )
+        preparation_seconds = time.perf_counter() - preparation_started
+
+        historical_question = self._is_historical_question(question)
+        current_state_rule = (
+            "When records give successive states for the same fact, entity, or "
+            "preference, use the latest supported state for the current answer. Do not "
+            "let a later unrelated event overwrite an earlier fact."
+            if plan.prefer_latest and not historical_question
+            else (
+                "Use the state that was true at the time requested. Preserve superseded "
+                "facts when the question asks about an earlier point in the timeline."
+            )
+        )
+
+        system_prompt = f"""
+            You are the reasoning component of an EPISODIC MEMORY agent.
+            
+            Use only the supplied memory. Reconstruct only the timeline needed for the question.
+            Keep different people, objects, sessions, and occasions separate.
+            
+            Rules:
+            - {current_state_rule}
+            - Explicit dates/times control chronology when clear; otherwise use source order.
+            - For corrections or conflicts, choose the state requested by the question.
+            - For before/after/next/first/last, find the anchor event before choosing its neighbor.
+            - Combine records only when the evidence connects them; preserve attribution and negation.
+            - Prefer exact source detail over a consistent summary when both are present.
+            - If memory does not establish the answer, say it is not present rather than guessing.
+            - Return only the final answer in the format requested by the question.
+        """.strip()
+
+        user_prompt = f"""
+            QUESTION TYPE: {question.metadata.get("question_type") or "unspecified"}
+            
+            RETRIEVED EPISODIC TIMELINE:
+            {context or "[No relevant episodes were retrieved]"}
+            
+            QUESTION:
+            {question.text}
+        """.strip()
+
+        print(
+            f"[episodic] context ready | tokens={context_tokens:,} | generating",
+            flush=True,
+        )
+        generation_started = time.perf_counter()
+        generation_task = asyncio.create_task(
+            self._generate(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
+        )
         try:
-            initial_query_time = time.time()
+            while True:
+                done, _ = await asyncio.wait({generation_task}, timeout=60.0)
+                if done:
+                    hypothesis, generation_seconds = generation_task.result()
+                    break
+                print(
+                    f"[episodic] generation still running | "
+                    f"elapsed={time.perf_counter() - generation_started:.0f}s",
+                    flush=True,
+                )
+        except BaseException:
+            generation_task.cancel()
+            await asyncio.gather(generation_task, return_exceptions=True)
+            raise
 
-            # Retrieves relevant memory episodes
-            episodes = self.parse_memories(text = await self.memory_block._aget([ChatMessage(role = "user", content = user_msg)]))
+        # retrieved_count still measures search output, not only the subset that fit in
+        # the final prompt, so evaluator metrics keep their original meaning.
+        return self._answer_result(
+            hypothesis=hypothesis,
+            memories=memories,
+            context_tokens=context_tokens,
+            retrieval_seconds=retrieval_seconds,
+            preparation_seconds=preparation_seconds,
+            generation_seconds=generation_seconds,
+            plan=plan,
+            strategy=strategy,
+        )
 
-            # Parses relevant memory episodes into ChatMessage objects
-            relevant_chat_history = []
-            for entry in episodes:
-                # entry is a dict with keys like "[USER INPUT]", "[AGENT OUTPUT]", "[OUTCOME]" etc
-                if "[USER INPUT]" in entry:
-                    relevant_chat_history.append(ChatMessage(role="user", content=entry.get("[USER INPUT]", "")))
-                if "[AGENT OUTPUT]" in entry:
-                    agent_msg_content = entry.get("[AGENT OUTPUT]", "")
-                    # Append metadata fields in a human-readable way
-                    extra_info = []
-                    if entry.get("[OUTCOME]"):
-                        extra_info.append(f"Outcome: {entry.get('[OUTCOME]')}")
-                    if entry.get("[LOCATION]"):
-                        extra_info.append(f"Location: {entry.get('[LOCATION]')}")
-                    if entry.get("[REFLECTION]"):
-                        extra_info.append(f"Reflection: {entry.get('[REFLECTION]')}")
-                    if extra_info:
-                        agent_msg_content += "\n" + "\n".join(extra_info)
-                    relevant_chat_history.append(ChatMessage(role="assistant", content=agent_msg_content))
+    def _select_retrieval_plan(
+        self,
+        question: EvaluationQuestion,
+        default_plan: RetrievalPlan,
+    ) -> tuple[RetrievalPlan, str]:
+        # Spend retrieval breadth where it improves recall, not on extra model calls.
 
-            # Track input tokens using count_tokens
-            full_msg = " ".join([m.content for m in relevant_chat_history]) + " " + user_msg
-            self.query_input_tokens = count_tokens(full_msg)
-
-            context_text = "\n".join([f"{m.role.capitalize()}: {m.content}" for m in relevant_chat_history])
-            prompt = (
-                f"User: {user_msg}\n"
-                f"Known context (may be empty):\n{context_text}\n\n"
-                "Assistant:"
+        if default_plan.mode in {"all", "global"}:
+            return (
+                default_plan,
+                "exact complete episodic timeline with recursive reduction",
             )
 
-            completion = await self.llm.acomplete(prompt)
-            output_text = completion.text.strip()
+        question_type = self._question_type(question)
+        top_k = max(
+            default_plan.top_k, 6
+        )  # Keep a small recall margin for simple queries.
+        neighbor_window = default_plan.neighbor_window
+        candidate_multiplier = max(default_plan.candidate_multiplier, 3)
+        prefer_latest = default_plan.prefer_latest
+        reasons = [f"hybrid top_k={top_k}"]
 
-            self.query_output_tokens = count_tokens(output_text)
-            self.query_time = time.time() - initial_query_time      # Compute elapsed time for this question
-            return AgentReply(response_str = output_text)
+        # Abstention questions benefit from enough evidence to verify absence without
+        # flooding the answer with unrelated records.
+        if question_type == "abstention":
+            top_k = max(default_plan.top_k, 6)
+            reasons.append("controlled abstention breadth")
 
-        except Exception as e:
-            self.query_time = 0
-            self.query_input_tokens = 0
-            self.query_output_tokens = 0
-            print(f"Error in EpisodicAgent: {e}")
-            return AgentReply(response_str = "I'm sorry, I'm having trouble processing your request. Please try again.")
+        if self._is_temporal_question(question):
+            top_k = max(top_k, 12)
+            neighbor_window = max(neighbor_window, 1)
+            candidate_multiplier = max(candidate_multiplier, 4)
+            reasons.append("wide temporal candidate pool")
 
-    def parse_memories(self, text: str) -> List[dict[str, str]] :
-        """Converts the unformatted string (bundled up memory episodes) into a list of dictionaries with str->str keys."""
+        if self._is_multi_hop_question(question):
+            top_k = max(top_k, 14)
+            neighbor_window = max(neighbor_window, 1)
+            candidate_multiplier = max(candidate_multiplier, 4)
+            reasons.append("multi-event candidate pool")
 
-        relevant_memories: List[dict[str, str]] = []
-        current_entry: dict[str, str] = {}
+        # These benchmark labels normally ask which state wins after an update or
+        # conflict. Historical wording still overrides this in the answer prompt.
+        if question_type in {
+            "knowledge-update",
+            "knowledge_update",
+            "temporal_update",
+            "conflict_resolution",
+        }:
+            prefer_latest = True
+            top_k = max(top_k, 12)
+            neighbor_window = max(neighbor_window, 1)
+            reasons.append("current-state resolution")
 
-        for line in text.splitlines():
-            line = line.strip()
-            if not line:
+        if question_type in {
+            "recommendation_from_memory",
+            "preference_recall",
+            "constraint_recall",
+            "purchase_history_recall",
+            "cart_or_wishlist_recall",
+            "return_support_recall",
+        }:
+            top_k = max(top_k, 8)
+            candidate_multiplier = max(candidate_multiplier, 4)
+            reasons.append("exact ecommerce recall")
+
+        if self.source.casefold().startswith("eventqa"):
+            top_k = max(top_k, 14)
+            neighbor_window = max(neighbor_window, 2)
+            candidate_multiplier = max(candidate_multiplier, 4)
+            reasons.append("fine-grained EventQA sequence")
+
+        return (
+            replace(
+                default_plan,
+                top_k=top_k,
+                neighbor_window=neighbor_window,
+                candidate_multiplier=candidate_multiplier,
+                prefer_latest=prefer_latest,
+            ),
+            "; ".join(reasons),
+        )
+
+    def _select_context_memories(
+        self,
+        memories: list[RetrievedMemory],
+        *,
+        max_tokens: int,
+    ) -> list[RetrievedMemory]:
+        # Keep the highest-value records that fit, then let the caller restore chronology.
+
+        if not memories or max_tokens <= 0:
+            return []
+
+        # A cheap character estimate is enough for relevance preselection. _pack_context
+        # performs the final exact token-safe packing, so repeated tokenizer calls here only
+        # add CPU time without changing correctness.
+        rendered_sizes = {
+            memory.memory_id: max(1, (len(self._format_episode(memory, 1)) + 3) // 4)
+            for memory in memories
+        }
+        total_tokens = sum(rendered_sizes.values()) + max(0, len(memories) - 1) * 6
+        if total_tokens <= max_tokens:
+            return list(memories)
+
+        # Seed and exact-source records carry the strongest fused scores. Neighbor
+        # episodes have deliberately smaller scores, so they fill only remaining space.
+        ranked = sorted(
+            memories,
+            key=lambda item: (
+                item.score,
+                self._kind_priority(item),
+                item.ordinal,
+            ),
+            reverse=True,
+        )
+
+        selected: list[RetrievedMemory] = []
+        used_tokens = 0
+        for memory in ranked:
+            size = rendered_sizes[memory.memory_id]
+            required = size + (6 if selected else 0)
+
+            if used_tokens + required <= max_tokens:
+                selected.append(memory)
+                used_tokens += required
                 continue
 
-            if line.startswith("[USER INPUT]"):
-                current_entry = {}  # Creates a new dictionary for each memory episode
-            if ": " in line:
-                key, value = line.split(": ", 1)
-                current_entry[key.strip()] = value.strip()  # Stores key-value pair into dictionary
-            if line.startswith("[REFLECTION]"):
-                if current_entry:
-                    relevant_memories.append(current_entry) # Adds current dictionary (complete memory episode) to dictionary
+            # If the single best record is oversized, keep it so BaseAgent can safely
+            # truncate that one record instead of returning no evidence at all.
+            if not selected:
+                selected.append(memory)
+                break
 
-        return relevant_memories
+        return selected
 
-    def reset_memories(self):
-        """Clear episodic memory."""
-        self.memory_block.reset_memories()
+    @staticmethod
+    def _timeline_sort_key(memory: RetrievedMemory) -> tuple[int, int, float, str]:
+        # Exact source evidence comes before derived events from the same source position.
 
-#-------------------------------
-#   SMOKE TESTS
-#-------------------------------
+        source_first = 0 if memory.metadata.get("entry_kind") == "source_episode" else 1
+        return (memory.ordinal, source_first, -memory.score, memory.memory_id)
 
-# Helper functions
-def print_result(test_name, passed):
-    print(f"\n=== {test_name} ===")
-    print(f"Result: {'PASSED' if passed else 'FAILED'}\n")
+    @staticmethod
+    def _kind_priority(memory: RetrievedMemory) -> int:
+        # Structured events are compact, while exact source anchors are recall fallbacks.
 
-def print_memories(memories):
-    if not memories:
-        print("No memories stored.")
-        return
-    for i, mem in enumerate(memories, 1):
-        print(f"Memory #{i}:\n{mem}\n{'-'*40}")
+        return 1 if memory.metadata.get("entry_kind") == "episode" else 0
 
-def contains_keywords(text, keywords):
-    return any(kw.lower() in text.lower() for kw in keywords)
+    @staticmethod
+    def _format_episode(memory: RetrievedMemory, index: int) -> str:
+        # Format exact source anchors and derived event records without duplicating fields.
 
-# Tests
-async def test_memory_storage(agent):
-    """Single episode is stored correctly."""
-    agent.reset_memories()
-    await agent.achat("Where is the event happening?")
-    memories = agent.get_all_memories()
-    passed = len(memories) == 1 and contains_keywords(memories[0], ["event", "convention"])
-    print_result("Memory storage", passed)
-    print_memories(memories)
+        metadata = memory.metadata
+        entry_kind = str(metadata.get("entry_kind") or "episode")
 
-async def test_memory_deduplication(agent):
-    """Duplicate inputs should not create new episodes."""
-    agent.reset_memories()
-    await agent.achat("Where is the event happening?")
-    await agent.achat("Where is the event happening?")  # duplicate
-    memories = agent.get_all_memories()
-    passed = len(memories) == 1
-    print_result("Memory deduplication", passed)
-    print_memories(memories)
+        if entry_kind == "source_episode":
+            timestamp = metadata.get("timestamp") or "unspecified"
+            time_line = f"\nTime: {timestamp}" if timestamp != "unspecified" else ""
+            return (
+                f"[SOURCE {index} | order={memory.ordinal}]\n"
+                f"{memory.text}{time_line}"
+            )
 
-async def test_multiple_episodes(agent):
-    """Multiple distinct inputs create separate episodes."""
-    agent.reset_memories()
+        participants = metadata.get("participants") or []
+        participants_text = (
+            ", ".join(map(str, participants)) if participants else "unspecified"
+        )
+        if not metadata.get("event"):
+            # Fast local episodes already contain their exact source text and timestamp in
+            # the retrieval text, so avoid storing and formatting a second full-text copy.
+            return f"[EPISODE {index} | order={memory.ordinal}]\n{memory.text}"
 
-    await agent.achat("Where is the event happening?")
-    await agent.achat("What are the top restaurants in New York?")
-
-    # Use _aget to retrieve the most relevant entries for each query
-    event_memories = await agent.memory_block._aget([ChatMessage(role = "user", content = "event")])
-    restaurant_memories = await agent.memory_block._aget([ChatMessage(role = "user", content = "restaurants new york")])
-
-    passed = (
-        contains_keywords(event_memories, ["event"]) and
-        contains_keywords(restaurant_memories, ["restaurants", "new york"])
-    )
-
-    print_result("Multiple episode storage", passed)
-    print("Event memory:\n", event_memories)
-    print("Restaurant memory:\n", restaurant_memories)
-
-async def test_memory_reset(agent):
-    """Memory reset clears all stored episodes."""
-    agent.reset_memories()
-    await agent.achat("Where is the event happening?")
-    agent.reset_memories()
-    memories = agent.get_all_memories()
-    passed = len(memories) == 0
-    print_result("Memory reset", passed)
-
-async def test_recall(agent):
-    """Agent can recall previously stored information."""
-    agent.reset_memories()
-    await agent.achat("Tell me about the best restaurants in New York City.")
-    reply = await agent.achat("What were the restaurants again?")
-    passed = contains_keywords(reply.response_str, ["restaurants", "new york"])
-    print_result("Recall query", passed)
-    print(f"Agent reply:\n{reply.response_str}\n")
-
-async def test_empty_input(agent):
-    """Empty user input should not crash agent."""
-    agent.reset_memories()
-    reply = await agent.achat("")
-    passed = isinstance(reply.response_str, str) and len(reply.response_str) > 0
-    print_result("Empty input handling", passed)
-    print(f"Agent reply:\n{reply.response_str}\n")
-
-async def test_whitespace_input(agent):
-    """Whitespace-only input is handled gracefully."""
-    agent.reset_memories()
-    reply = await agent.achat("   ")
-    passed = isinstance(reply.response_str, str) and len(reply.response_str) > 0
-    print_result("Whitespace input handling", passed)
-    print(f"Agent reply:\n{reply.response_str}\n")
-
-async def test_long_input(agent):
-    """Very long inputs are processed without crashing."""
-    agent.reset_memories()
-    long_input = "Tell me about " + "restaurants " * 100
-    reply = await agent.achat(long_input)
-    passed = isinstance(reply.response_str, str) and len(reply.response_str) > 0
-    print_result("Long input handling", passed)
-
-async def test_numeric_input(agent):
-    """Numeric input is processed correctly."""
-    agent.reset_memories()
-    reply = await agent.achat("1234567890")
-    passed = isinstance(reply.response_str, str) and len(reply.response_str) > 0
-    print_result("Numeric input handling", passed)
-
-async def test_special_char_input(agent):
-    """Special characters in input are handled correctly."""
-    agent.reset_memories()
-    reply = await agent.achat("!@#$%^&*()_+")
-    passed = isinstance(reply.response_str, str) and len(reply.response_str) > 0
-    print_result("Special character input", passed)
-
-async def test_multiple_duplicate_inputs(agent):
-    """Multiple repeated inputs only create one memory per unique query."""
-    agent.reset_memories()
-    for _ in range(5):
-        await agent.achat("Where is the event happening?")
-    memories = agent.get_all_memories()
-    passed = len(memories) == 1
-    print_result("Multiple duplicates handling", passed)
-
-async def test_sequence_of_varied_inputs(agent):
-    """Sequence of different inputs stored correctly."""
-    agent.reset_memories()
-    inputs = [
-        "Where is the event happening?",
-        "What time is the meeting?",
-        "Who is attending?",
-        "Remind me about the event location",
-        "List the top restaurants in NYC"
-    ]
-    for inp in inputs:
-        await agent.achat(inp)
-    memories = agent.get_all_memories()
-    passed = len(memories) == len(inputs)
-    print_result("Sequence of varied inputs", passed)
-
-async def test_reset_after_multiple(agent):
-    """Reset works after multiple stored episodes."""
-    agent.reset_memories()
-    await agent.achat("Where is the event happening?")
-    await agent.achat("What are the top restaurants in New York?")
-    agent.reset_memories()
-    memories = agent.get_all_memories()
-    passed = len(memories) == 0
-    print_result("Reset after multiple episodes", passed)
-
-async def test_recall_after_reset(agent):
-    """Recall returns empty or default after memory reset."""
-    agent.reset_memories()
-    await agent.achat("Tell me about NYC restaurants")
-    agent.reset_memories()
-    reply = await agent.achat("What were the restaurants again?")
-    print("REPLY: " + reply.response_str)
-    passed = contains_keywords(reply.response_str, ["sorry", "cannot recall", "could", "please", "clarify", "no information"])
-    print_result("Recall after reset", passed)
-
-async def test_edge_case_special_keywords(agent):
-    """Input with keywords only is processed and stored."""
-    agent.reset_memories()
-    await agent.achat("event restaurant NYC")
-    memories = agent.get_all_memories()
-    passed = len(memories) == 1 and contains_keywords(memories[0], ["event", "restaurant", "nyc"])
-    print_result("Special keywords input", passed)
-
-async def test_memory_content_structure(agent):
-    """Memory entries contain required sections (USER INPUT, AGENT OUTPUT, OUTCOME, LOCATION, REFLECTION)."""
-    agent.reset_memories()
-    await agent.achat("Where is the event happening?")
-    memories = agent.get_all_memories()
-    mem = memories[0]
-    required_keys = ["USER INPUT", "AGENT OUTPUT", "OUTCOME", "LOCATION", "REFLECTION"]
-    passed = all(key in mem for key in required_keys)
-    print_result("Memory content structure", passed)
-
-async def main():
-    """Runs all test cases."""
-    agent = EpisodicAgent()
-
-    await test_memory_storage(EpisodicAgent())
-    await test_memory_deduplication(EpisodicAgent())
-    await test_multiple_episodes(EpisodicAgent())
-    await test_memory_reset(EpisodicAgent())
-    await test_recall(EpisodicAgent())
-    await test_empty_input(EpisodicAgent())
-    await test_whitespace_input(EpisodicAgent())
-    await test_long_input(EpisodicAgent())
-    await test_numeric_input(EpisodicAgent())
-    await test_special_char_input(EpisodicAgent())
-    await test_multiple_duplicate_inputs(EpisodicAgent())
-    await test_sequence_of_varied_inputs(EpisodicAgent())
-    await test_reset_after_multiple(EpisodicAgent())
-    await test_recall_after_reset(EpisodicAgent())
-    await test_edge_case_special_keywords(EpisodicAgent())
-    await test_memory_content_structure(EpisodicAgent())
-
-    print("\nAll episodic agent smoke tests completed.")
-    agent.reset_memories()
-
-if __name__ == "__main__":
-
-    #   For running test cases, use this:
-    # asyncio.run(main())
-
-    #   For running the agent with human input, use this:
-    agent = EpisodicAgent()
-
-    user_input = input("Enter your input: ")
-    while user_input.strip() != "":
-        reply = asyncio.run(agent.achat(user_input))
-        print(f"Agent Response: {reply.response_str}")
-        user_input = input("Enter your input: ")
-
-    print("Thank you for chatting with me!")
-    agent.reset_memories()
+        event = str(metadata["event"]).strip()
+        lines = [f"[EPISODE {index} | order={memory.ordinal}]", f"Event: {event}"]
+        if participants_text != "unspecified":
+            lines.append(f"Participants: {participants_text}")
+        timestamp = metadata.get("time") or metadata.get("timestamp")
+        if timestamp:
+            lines.append(f"Time: {timestamp}")
+        if metadata.get("location"):
+            lines.append(f"Location: {metadata['location']}")
+        if metadata.get("outcome"):
+            lines.append(f"Outcome: {metadata['outcome']}")
+        if metadata.get("causal_context"):
+            lines.append(f"Cause: {metadata['causal_context']}")
+        return "\n".join(lines)

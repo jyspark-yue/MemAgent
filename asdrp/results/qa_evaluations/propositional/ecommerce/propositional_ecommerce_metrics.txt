@@ -1,0 +1,64 @@
+========================================================================
+PROPOSITIONAL | ECOMMERCE
+========================================================================
+
+Generated:       2026-08-10T00:31:09+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/ecommerce/propositional/ecommerce_propositional.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/propositional/ecommerce/ecommerce_propositional.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 94.16%
+End-to-end accuracy              94.16%
+Correct                          1,645
+Evaluated questions              1,747
+Input records                    1,747
+Macro accuracy by question type  91.23%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type               Correct  Count  Accuracy
+--------------------------  -------  -----  --------
+Abstention                  373      375    99.47%
+Cart Or Wishlist Recall     466      504    92.46%
+Conflict Resolution         52       55     94.55%
+Constraint Recall           132      148    89.19%
+Multi Session Synthesis     8        10     80.00%
+Preference Recall           156      166    93.98%
+Purchase History Recall     133      150    88.67%
+Recommendation From Memory  33       40     82.50%
+Return Support Recall       51       55     92.73%
+Temporal Update             241      244    98.77%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                         Correct  Count  Accuracy
+-----------------------------  -------  -----  --------
+ecommerce_conversations_final  1,645    1,747  94.16%
+
+ABSTENTION
+----------
+Correct  Count  Accuracy
+-------  -----  --------
+373      375    99.47%
+
+SOURCE RUN
+----------
+Run Id: 3232402b30174cf58c8486ebee67d314
+Completed Tasks: 351
+Completed Questions: 1,747
+Previously Completed Questions: 0
+Wall Runtime Seconds: 408.59
+Average Seconds Per Question: 0.23
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 0.478925
+
+========================================================================

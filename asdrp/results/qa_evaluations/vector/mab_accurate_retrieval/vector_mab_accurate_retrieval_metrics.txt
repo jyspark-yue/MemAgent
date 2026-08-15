@@ -1,0 +1,60 @@
+========================================================================
+VECTOR | MAB - ACCURATE RETRIEVAL
+========================================================================
+
+Generated:       2026-08-10T00:35:45+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/ar/vector/mab_ar_vector.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/vector/mab_accurate_retrieval/mab_ar_vector.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 85.75%
+End-to-end accuracy              85.75%
+Correct                          343
+Evaluated questions              400
+Input records                    400
+Macro accuracy by question type  61.76%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Knowledge Update           1        9      11.11%
+Multi Session              8        15     53.33%
+Single Session Assistant   4        6      66.67%
+Single Session Preference  5        6      83.33%
+Single Session User        6        9      66.67%
+Temporal Reasoning         9        15     60.00%
+Unspecified                310      340    91.18%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source          Correct  Count  Accuracy
+--------------  -------  -----  --------
+eventqa_131072  96       100    96.00%
+eventqa_65536   97       100    97.00%
+eventqa_full    80       100    80.00%
+longmemeval_s*  33       60     55.00%
+ruler_qa1_197K  19       20     95.00%
+ruler_qa2_421K  18       20     90.00%
+
+SOURCE RUN
+----------
+Run Id: 411fe47996ec4f7e98392db54962ab79
+Completed Tasks: 22
+Completed Questions: 400
+Previously Completed Questions: 0
+Wall Runtime Seconds: 182.22
+Average Seconds Per Question: 0.46
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 7.908585
+
+========================================================================

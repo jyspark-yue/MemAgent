@@ -1,0 +1,56 @@
+========================================================================
+GRAPH | MAB - CONFLICT RESOLUTION
+========================================================================
+
+Generated:       2026-08-10T00:40:28+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/cr/graph/mab_cr_graph.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/graph/mab_conflict_resolution/mab_cr_graph.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 79.78%
+End-to-end accuracy              79.78%
+Correct                          146
+Evaluated questions              183
+Input records                    183
+Macro accuracy by question type  79.78%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    146      183    79.78%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                     Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+factconsolidation_mh_262k  9        23     39.13%
+factconsolidation_mh_32k   14       23     60.87%
+factconsolidation_mh_64k   12       22     54.55%
+factconsolidation_mh_6k    20       23     86.96%
+factconsolidation_sh_262k  22       23     95.65%
+factconsolidation_sh_32k   22       22     100.00%
+factconsolidation_sh_64k   25       25     100.00%
+factconsolidation_sh_6k    22       22     100.00%
+
+SOURCE RUN
+----------
+Run Id: 4671b8b2a4c64982bfde1f861ba2ae2c
+Completed Tasks: 8
+Completed Questions: 183
+Previously Completed Questions: 0
+Wall Runtime Seconds: 94.07
+Average Seconds Per Question: 0.51
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 0.148133
+
+========================================================================

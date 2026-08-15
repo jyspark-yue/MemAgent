@@ -1,0 +1,61 @@
+========================================================================
+HVM | LONGMEMEVAL
+========================================================================
+
+Generated:       2026-08-10T00:36:48+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/longmemeval/hvm/lme_hvm.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/hvm/longmemeval/lme_hvm.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 72.00%
+End-to-end accuracy              72.00%
+Correct                          72
+Evaluated questions              100
+Input records                    100
+Macro accuracy by question type  76.12%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+Task-averaged accuracy           76.12%
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Single Session User        8        13     61.54%
+Single Session Preference  6        7      85.71%
+Single Session Assistant   11       11     100.00%
+Multi Session              19       29     65.52%
+Temporal Reasoning         17       26     65.38%
+Knowledge Update           11       14     78.57%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source       Correct  Count  Accuracy
+-----------  -------  -----  --------
+longmemeval  72       100    72.00%
+
+ABSTENTION
+----------
+Correct  Count  Accuracy
+-------  -----  --------
+4        6      66.67%
+
+SOURCE RUN
+----------
+Run Id: fb6988608ae248a5b2e9e19ba20b77a7
+Completed Tasks: 100
+Completed Questions: 100
+Previously Completed Questions: 0
+Wall Runtime Seconds: 4,254.43
+Average Seconds Per Question: 42.54
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 51.9621
+
+========================================================================

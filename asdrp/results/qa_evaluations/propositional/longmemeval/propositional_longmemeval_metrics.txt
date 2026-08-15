@@ -1,0 +1,62 @@
+========================================================================
+PROPOSITIONAL | LONGMEMEVAL
+========================================================================
+
+Generated:       2026-08-10T00:30:34+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/longmemeval/propositional/lme_propositional.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/propositional/longmemeval/lme_propositional.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 48.00%
+End-to-end accuracy              48.00%
+Correct                          48
+Evaluated questions              100
+Input records                    100
+Macro accuracy by question type  55.11%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+Task-averaged accuracy           55.11%
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Single Session User        8        13     61.54%
+Single Session Preference  5        7      71.43%
+Single Session Assistant   5        11     45.45%
+Multi Session              12       24     50.00%
+Temporal Reasoning         6        25     24.00%
+Knowledge Update           7        14     50.00%
+Abstention                 5        6      83.33%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source       Correct  Count  Accuracy
+-----------  -------  -----  --------
+longmemeval  48       100    48.00%
+
+ABSTENTION
+----------
+Correct  Count  Accuracy
+-------  -----  --------
+5        6      83.33%
+
+SOURCE RUN
+----------
+Run Id: 3c4970162db94ce587ae1cb57dd83884
+Completed Tasks: 100
+Completed Questions: 100
+Previously Completed Questions: 0
+Wall Runtime Seconds: 1,764.53
+Average Seconds Per Question: 17.65
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 32.590881
+
+========================================================================

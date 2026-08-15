@@ -1,14 +1,16 @@
 #############################################################################
-# base.py
+# File: base.py
 #
-# base class for agent replies
+# Description:
+#   Defines the small AgentReply record used by the legacy agent interface.
 #
-# @author Theodore Mui
-# @email  theodoremui@gmail.com
-# Fri Jul 04 11:30:53 PDT 2025
+#   - Stores the final response text in one dataclass field.
+#   - Remains for compatibility with code that expects AgentReply.
 #############################################################################
 
+
 from dataclasses import dataclass
+
 
 @dataclass
 class AgentReply:

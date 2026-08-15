@@ -1,0 +1,62 @@
+========================================================================
+CONDENSED | LONGMEMEVAL
+========================================================================
+
+Generated:       2026-08-10T00:32:32+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/longmemeval/condensed/lme_condensed.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/condensed/longmemeval/lme_condensed.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 15.00%
+End-to-end accuracy              15.00%
+Correct                          15
+Evaluated questions              100
+Input records                    100
+Macro accuracy by question type  24.83%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+Task-averaged accuracy           24.83%
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Single Session User        3        13     23.08%
+Single Session Preference  1        7      14.29%
+Single Session Assistant   2        11     18.18%
+Multi Session              0        24     0.00%
+Temporal Reasoning         1        25     4.00%
+Knowledge Update           2        14     14.29%
+Abstention                 6        6      100.00%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source       Correct  Count  Accuracy
+-----------  -------  -----  --------
+longmemeval  15       100    15.00%
+
+ABSTENTION
+----------
+Correct  Count  Accuracy
+-------  -----  --------
+6        6      100.00%
+
+SOURCE RUN
+----------
+Run Id: bfd83eeec8d6416885869c480d6d49a8
+Completed Tasks: 1
+Completed Questions: 1
+Previously Completed Questions: 99
+Wall Runtime Seconds: 587.6
+Average Seconds Per Question: 587.6
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 0.360776
+
+========================================================================

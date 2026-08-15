@@ -1,0 +1,60 @@
+========================================================================
+EPISODIC | MAB - ACCURATE RETRIEVAL
+========================================================================
+
+Generated:       2026-08-10T00:28:50+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/ar/episodic/mab_ar_episodic.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/episodic/mab_accurate_retrieval/mab_ar_episodic.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 92.50%
+End-to-end accuracy              92.50%
+Correct                          370
+Evaluated questions              400
+Input records                    400
+Macro accuracy by question type  88.12%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type              Correct  Count  Accuracy
+-------------------------  -------  -----  --------
+Knowledge Update           8        9      88.89%
+Multi Session              13       15     86.67%
+Single Session Assistant   6        6      100.00%
+Single Session Preference  5        6      83.33%
+Single Session User        7        9      77.78%
+Temporal Reasoning         13       15     86.67%
+Unspecified                318      340    93.53%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source          Correct  Count  Accuracy
+--------------  -------  -----  --------
+eventqa_131072  95       100    95.00%
+eventqa_65536   98       100    98.00%
+eventqa_full    86       100    86.00%
+longmemeval_s*  52       60     86.67%
+ruler_qa1_197K  20       20     100.00%
+ruler_qa2_421K  19       20     95.00%
+
+SOURCE RUN
+----------
+Run Id: 1a7922ca345347099616158ab2d4a94c
+Completed Tasks: 22
+Completed Questions: 400
+Previously Completed Questions: 0
+Wall Runtime Seconds: 153.59
+Average Seconds Per Question: 0.38
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 5.747658
+
+========================================================================

@@ -1,0 +1,50 @@
+========================================================================
+GRAPH | MAB - LONG-RANGE UNDERSTANDING
+========================================================================
+
+Generated:       2026-08-10T00:39:55+00:00
+Status:          OK
+Judge model:     gpt-5.6-sol
+Hypothesis file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/mab/lru/graph/mab_lru_graph.jsonl
+Evaluation file: /Users/eferns/PycharmProjects/asdrp/MemAgent/asdrp/results/qa_evaluations/graph/mab_long_range_understanding/mab_lru_graph.eval-results-gpt-5.6-sol.jsonl
+
+SUMMARY
+-------
+Metric                           Value
+-------------------------------  ------
+Overall accuracy                 20.59%
+End-to-end accuracy              20.59%
+Correct                          7
+Evaluated questions              34
+Input records                    34
+Macro accuracy by question type  20.59%
+Generation errors                0
+Judge errors                     0
+Unevaluated records              0
+
+PERFORMANCE BY QUESTION TYPE
+----------------------------
+Question Type  Correct  Count  Accuracy
+-------------  -------  -----  --------
+Unspecified    7        34     20.59%
+
+PERFORMANCE BY SOURCE
+---------------------
+Source                   Correct  Count  Accuracy
+-----------------------  -------  -----  --------
+detective_qa             7        14     50.00%
+infbench_sum_eng_shots2  0        20     0.00%
+
+SOURCE RUN
+----------
+Run Id: 57cf981cd1e14cdcbd2edbd3ca9a064e
+Completed Tasks: 27
+Completed Questions: 34
+Previously Completed Questions: 0
+Wall Runtime Seconds: 426.46
+Average Seconds Per Question: 12.54
+Tasks Failed: 0
+Questions Failed: 0
+Total Estimated Eval Cost Usd: 3.509481
+
+========================================================================
